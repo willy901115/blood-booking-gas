@@ -4,8 +4,6 @@ const sheetBooking = ss.getSheetByName('BookingData');
 const sheetSetting = ss.getSheetByName('設定');
 const sheetSummary = ss.getSheetByName('BookingSummary');
 
-// 💡 移除硬編碼的 TIME_SLOTS 陣列。
-
 function getSettings() {
   function toUcViewUrl(url) {
     if (!url) return "";
@@ -60,7 +58,6 @@ function isValidLandline(num) {
   return /^(0(?:2|3|4|5|6|7|8|82|836|89))-?\d{6,8}$/.test(num);
 }
 
-// 💡 輔助函式：將 HH:MM 轉換為總分鐘數
 function toMinutes(timestr) {
   if (!timestr || typeof timestr !== 'string') return NaN;
   const match = timestr.match(/^(\d{1,2}):(\d{2})$/);
@@ -85,7 +82,6 @@ function normalizeTime(raw) {
   return rawStr;
 }
 
-// 💡 NEW FUNCTION: 動態生成時段
 function generateTimeSlots() {
   const { slotStartTime, slotEndTime, slotIntervalMinutes } = getSettings();
   
@@ -95,15 +91,13 @@ function generateTimeSlots() {
 
   if (isNaN(startTimeMin) || isNaN(endTimeMin) || isNaN(interval) || interval <= 0 || startTimeMin >= endTimeMin) {
     Logger.log("Invalid time slot settings. Returning empty array.");
-    return []; // 設定無效時返回空陣列
+    return []; 
   }
 
   const slots = [];
-  // currentMin < endTimeMin 確保 endTime 本身不會被包含
   for (let currentMin = startTimeMin; currentMin < endTimeMin; currentMin += interval) {
     const hours = Math.floor(currentMin / 60);
     const minutes = currentMin % 60;
-    // 格式化為 "HH:MM"
     slots.push(`${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`);
   }
   
@@ -112,7 +106,7 @@ function generateTimeSlots() {
 
 
 function updateBookingSummary() {
-  const TIME_SLOTS = generateTimeSlots(); // 💡 使用動態時段
+  const TIME_SLOTS = generateTimeSlots(); 
   const { maxPerSlot } = getSettings();
   const data = sheetBooking.getDataRange().getValues();
   const validStatuses = ['待確認', '已確認'];
@@ -121,7 +115,6 @@ function updateBookingSummary() {
 
   for (let i = 1; i < data.length; i++) {
     const [token, name, email, phone, timeslot, status, , note] = data[i];
-    // 檢查 timeslot 是否是有效時段
     if (TIME_SLOTS.includes(timeslot) && validStatuses.includes(status) && slotMap[timeslot]?.length < maxPerSlot) {
       slotMap[timeslot].push([token, name, email, phone, status, note || '']);
     }
@@ -130,7 +123,6 @@ function updateBookingSummary() {
   const summaryData = [];
   TIME_SLOTS.forEach(slot => {
     const bookings = slotMap[slot];
-    // 如果時段沒有預約，我們仍需要為每個 maxPerSlot 填入空行
     for (let i = 0; i < maxPerSlot; i++) {
       const [token, name, email, phone, status, note] = bookings?.[i] || [];
       summaryData.push([
@@ -146,45 +138,33 @@ function updateBookingSummary() {
   });
 
   const lastRow = sheetSummary.getLastRow();
-  // 清除舊資料時，使用 getLastRow() - 1 是錯的，應該是 lastRow > 1
   if (lastRow > 1) sheetSummary.getRange(2, 1, lastRow - 1, 7).clearContent();
   if (summaryData.length > 0) sheetSummary.getRange(2, 1, summaryData.length, 7).setValues(summaryData);
 }
 
 function doPost(e) {
-  // 1. 取得腳本鎖定物件
   const lock = LockService.getScriptLock();
-  // 設定等待鎖定的時間上限（例如 10 秒 = 10000 毫秒）
   const LOCK_WAIT_TIMEOUT = 10000; 
   
   try {
     const data = JSON.parse(e.postData.contents);
     const { name, email, phone, timeslot } = data;
     
-    // --- 可以在鎖定前先進行不涉及試算表存取的基本驗證 ---
     if (!name || !email || !phone || !timeslot) throw new Error("缺少必要欄位");
     if (!isValidEmail(email)) return corsJsonResponse({ status: 'error', message: 'Email 格式不正確，請重新輸入' });
     if (!isValidMobile(phone) && !isValidLandline(phone)) return corsJsonResponse({ status: 'error', message: '電話格式不正確' });
     
-    // 💡 檢查時段是否有效
     const TIME_SLOTS = generateTimeSlots();
     if (!TIME_SLOTS.includes(timeslot)) {
       return corsJsonResponse({ status: 'error', message: '時段無效，請重新選擇' });
     }
 
-    // 2. 等待取得鎖定 (此處是關鍵，確保多個請求會排隊等待)
     lock.waitLock(LOCK_WAIT_TIMEOUT); 
     
-    // ===========================================
-    // START: 競爭條件的「關鍵區塊」
-    // ===========================================
-    
     const { maxPerSlot, activityDate, activityPlace, activityContact } = getSettings();
-    // 重新讀取試算表中的所有資料 (確保是最新狀態)
     const allRows = sheetBooking.getDataRange().getValues();
     const invalidStates = ["已取消", "回覆逾期", "已拒絕"];
 
-    // 重新檢查重複預約 (讀取 Sheet)
     const emailExists = allRows.some(row => row[2] === email && !invalidStates.includes(row[5]));
     const phoneExists = allRows.some(row => row[3] === phone && !invalidStates.includes(row[5]));
     if (emailExists || phoneExists) {
@@ -193,14 +173,12 @@ function doPost(e) {
       return corsJsonResponse({ status: 'error', message: `此${field}已預約過` });
     }
 
-    // 重新檢查名額 (讀取 Sheet，確保在鎖定內進行)
     const currentCount = allRows.filter(row => row[4] === timeslot && ["待確認", "已確認"].includes(row[5])).length;
     if (currentCount >= maxPerSlot) {
       lock.releaseLock(); 
       return corsJsonResponse({ status: 'error', message: '此時段已額滿' });
     }
 
-    // 寫入預約資料 (寫入 Sheet，這是原子操作的結尾)
     const now = new Date();
     const id = `Q${Math.floor((now.getMonth() + 3) / 3)}-${now.getFullYear()}-${Utilities.getUuid().slice(0, 8)}`;
     const values = [id, name, email, phone, timeslot, '待確認', now, ''];
@@ -209,22 +187,14 @@ function doPost(e) {
     sheetBooking.getRange(sheetBooking.getLastRow(), 4).setNumberFormat('@STRING@');
     sheetBooking.getRange(sheetBooking.getLastRow(), 5).setNumberFormat('@STRING@');
 
-    // 更新總表 (寫入 Sheet)
     updateBookingSummary();
     
-    // 3. 釋放鎖定 (在成功完成所有寫入操作後釋放)
     lock.releaseLock(); 
     
-    // ===========================================
-    // END: 競爭條件的「關鍵區塊」
-    // ===========================================
-
-    // 4. 寄送郵件 (不涉及 Sheet 寫入，可在鎖定釋放後執行)
     const confirmUrl = `https://blood-booking.vercel.app/confirm?token=${id}`;
     const cancelUrl = `https://blood-booking.vercel.app/cancel?token=${id}`;
     
-    // ✅ 修正地圖 URL 建構錯誤
-    const mapUrl = `https://www.google.com/maps/search/${encodeURIComponent(activityPlace)}`;
+    const mapUrl = `https://www.google.com/search?q=https://www.google.com/maps%3Fq%3D${encodeURIComponent(activityPlace)}`;
 
     MailApp.sendEmail({
       to: email,
@@ -245,13 +215,11 @@ function doPost(e) {
     return corsJsonResponse({ status: 'success', id });
 
   } catch (error) {
-    // 5. 錯誤處理：如果程式碼在取得鎖定後發生錯誤，必須確保鎖定被釋放。
     if (lock.hasLock()) {
       lock.releaseLock();
     }
     
     let errorMessage = error.message;
-    // 如果是鎖定等待超時的錯誤，給予友善提示
     if (error.message.includes('Timeout')) {
       errorMessage = "系統繁忙，請稍後再試。";
     }
@@ -264,11 +232,13 @@ function doGet(e) {
   const { type, token } = e.parameter;
   if (!type) return corsJsonResponse({ status: 'error', message: '缺少 type' });
 
-  const { maxPerSlot, startDate, activityDate, activityPlace, activityContact, promoImage, promoLink, secondPromoImage, secondPromoLink } = getSettings();
+  // 💡 NEW: 讀取 bookingCutoffDate
+  const { maxPerSlot, startDate, activityDate, activityPlace, activityContact, promoImage, promoLink, secondPromoImage, secondPromoLink, bookingCutoffDate } = getSettings();
   const data = sheetBooking.getDataRange().getValues();
   const now = new Date();
 
   if (type === 'confirm' || type === 'cancel') {
+    // ... (省略 confirm/cancel 邏輯，無日期修改)
     if (!token) return corsJsonResponse({ status: 'error', message: '缺少 token' });
     const rowIndex = data.findIndex(row => row[0] === token);
     if (rowIndex === -1) return corsJsonResponse({ status: 'error', message: '查無預約資料' });
@@ -296,16 +266,15 @@ function doGet(e) {
     const rowIndex = data.findIndex(row => row[0] === token);
     if (rowIndex === -1) return corsJsonResponse({ status: 'error', message: '查無預約資料' });
 
-    // 欄位: [id, name, email, phone, timeslot, status, createTime]
     const [id, name, email, phone, timeslot, status, createTime] = data[rowIndex];
-    const { bookingCutoffDate } = getSettings();
-    const deadlineDate = new Date(bookingCutoffDate);
     
-    // 計算截止日期：取 (created + 7天) 和 (activityDate) 中較早者
+    // 💡 修正：使用 bookingCutoffDate 作為最終截止日
+    const deadlineDate = new Date(bookingCutoffDate); 
+    
+    // 計算截止日期：取 (created + 7天) 和 (預約截止日) 中較早者
     const created = new Date(createTime);
     const deadlineTimestamp = Math.min(created.getTime() + 7 * 24 * 60 * 60 * 1000, deadlineDate.getTime());
     
-    // 轉換為 ISO 格式方便前端解析
     const deadline = new Date(deadlineTimestamp).toISOString(); 
     
     return corsJsonResponse({ 
@@ -314,7 +283,6 @@ function doGet(e) {
         bookingId: id, 
         name, 
         email, 
-        // 移除 GAS 為了儲存數字格式而加的單引號
         phone: String(phone).replace(/^'/, ''), 
         timeslot, 
         status, 
@@ -324,19 +292,19 @@ function doGet(e) {
   }
 
   if (type === 'availability') {
-    const TIME_SLOTS = generateTimeSlots(); // 💡 使用動態時段
+    const TIME_SLOTS = generateTimeSlots(); 
     const capacityMap = {};
     TIME_SLOTS.forEach(slot => capacityMap[slot] = maxPerSlot);
 
     for (let i = 1; i < data.length; i++) {
       const [ , , , , rawSlot, status ] = data[i];
       const timeSlot = normalizeTime(rawSlot);
-      // 確保只計算在動態生成的 TIME_SLOTS 內的時段
       if (TIME_SLOTS.includes(timeSlot) && ["待確認", "已確認"].includes(status)) {
         capacityMap[timeSlot] = Math.max(0, capacityMap[timeSlot] - 1);
       }
     }
 
+    // 💡 修正：預約截止檢查點改為 bookingCutoffDate
     const bookingClosed = now >= new Date(bookingCutoffDate.getTime());
     const notYetOpen = now < startDate;
 
@@ -347,6 +315,8 @@ function doGet(e) {
       notYetOpen,
       activityInfo: {
         date: Utilities.formatDate(activityDate, "Asia/Taipei", "yyyy/MM/dd"),
+        // 💡 NEW: 回傳預約截止日期給前端
+        bookingCutoffDate: Utilities.formatDate(bookingCutoffDate, "Asia/Taipei", "yyyy/MM/dd"),
         place: activityPlace,
         contact: activityContact,
         startDate: Utilities.formatDate(startDate, "Asia/Taipei", "yyyy/MM/dd"),
@@ -369,8 +339,7 @@ function sendReminderBeforeEvent() {
   if (today.toDateString() !== reminderDay.toDateString()) return;
 
   const data = sheetBooking.getDataRange().getValues();
-  // ✅ 修正地圖 URL 建構錯誤
-  const mapUrl = `https://maps.google.com/maps?q=$${encodeURIComponent(activityPlace)}`;
+  const mapUrl = `https://www.google.com/search?q=https://www.google.com/maps/search/%3Fapi%3D1%26query%3D${encodeURIComponent(activityPlace)}`;
 
   data.forEach((row, i) => {
     if (i === 0) return;
@@ -394,10 +363,13 @@ function sendReminderBeforeEvent() {
 }
 
 function checkExpiredBookings() {
-  const { bookingCutoffDate, activityContact } = getSettings();
+  // 💡 NEW: 讀取 bookingCutoffDate
+  const { activityContact, bookingCutoffDate } = getSettings(); 
   const today = new Date();
-  const deadlineDate = new Date(bookingCutoffDate);
-  deadlineDate.setDate(bookingCutoffDate.getDate());
+  
+  // 💡 修正：使用 bookingCutoffDate 作為最終期限
+  const deadlineDate = new Date(bookingCutoffDate); 
+  deadlineDate.setDate(bookingCutoffDate.getDate()); 
 
   const data = sheetBooking.getDataRange().getValues();
 
@@ -407,6 +379,7 @@ function checkExpiredBookings() {
     if (status !== '待確認') return;
 
     const created = new Date(createTime);
+    // 💡 修正：使用 deadlineDate (即 bookingCutoffDate)
     const deadline = new Date(Math.min(created.getTime() + 7 * 24 * 60 * 60 * 1000, deadlineDate.getTime()));
     const daysLeft = Math.ceil((deadline - today) / (1000 * 60 * 60 * 24));
 
