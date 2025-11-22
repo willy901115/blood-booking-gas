@@ -20,15 +20,15 @@ function getSettings() {
   }
   
   return {
-    activityDate: new Date(Utilities.formatDate(sheetSetting.getRange('A2').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
-    activityPlace: sheetSetting.getRange('B2').getValue(),
-    activityContact: sheetSetting.getRange('C2').getValue(),
-    startDate: new Date(Utilities.formatDate(sheetSetting.getRange('E2').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
-    maxPerSlot: sheetSetting.getRange('F2').getValue(),
-    promoImage: toUcViewUrl(String(sheetSetting.getRange('G2').getValue() || "")),
-    promoLink: sheetSetting.getRange('H2').getValue(),
-    secondPromoImage: toUcViewUrl(String(sheetSetting.getRange('I2').getValue() || "")),
-    secondPromoLink: sheetSetting.getRange('J2').getValue(),
+    activityDate: new Date(Utilities.formatDate(sheetSetting.getRange('C2').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
+    activityPlace: sheetSetting.getRange('C10').getValue(),
+    activityContact: sheetSetting.getRange('C12').getValue(),
+    startDate: new Date(Utilities.formatDate(sheetSetting.getRange('C3').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
+    maxPerSlot: sheetSetting.getRange('C9').getValue(),
+    promoImage: toUcViewUrl(String(sheetSetting.getRange('C13').getValue() || "")),
+    promoLink: sheetSetting.getRange('C14').getValue(),
+    secondPromoImage: toUcViewUrl(String(sheetSetting.getRange('C15').getValue() || "")),
+    secondPromoLink: sheetSetting.getRange('C16').getValue(),
   };
 }
 
