@@ -1,0 +1,360 @@
+// ✅ 全域變數與常數
+const ss = SpreadsheetApp.getActiveSpreadsheet();
+const sheetBooking = ss.getSheetByName('BookingData');
+const sheetSetting = ss.getSheetByName('設定');
+const sheetSummary = ss.getSheetByName('BookingSummary');
+
+const TIME_SLOTS = [
+  "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30",
+  "13:00", "13:30", "14:00", "14:30", "15:00", "15:30", "16:00"];
+
+function getSettings() {
+  function toUcViewUrl(url) {
+    if (!url) return "";
+    var m =
+      url.match(/[?&]id=([a-zA-Z0-9_-]{10,})/) ||
+      url.match(/\/d\/([a-zA-Z0-9_-]{10,})(?:[\/?]|$)/) ||
+      url.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]{10,})/);
+    var id = m ? m[1] : "";
+    return id ? ("https://drive.google.com/uc?export=view&id=" + id) : url;
+  }
+  
+  return {
+    activityDate: new Date(Utilities.formatDate(sheetSetting.getRange('A2').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
+    activityPlace: sheetSetting.getRange('B2').getValue(),
+    activityContact: sheetSetting.getRange('C2').getValue(),
+    startDate: new Date(Utilities.formatDate(sheetSetting.getRange('E2').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
+    maxPerSlot: sheetSetting.getRange('F2').getValue(),
+    promoImage: toUcViewUrl(String(sheetSetting.getRange('G2').getValue() || "")),
+    promoLink: sheetSetting.getRange('H2').getValue(),
+    secondPromoImage: toUcViewUrl(String(sheetSetting.getRange('I2').getValue() || "")),
+    secondPromoLink: sheetSetting.getRange('J2').getValue(),
+  };
+}
+
+function corsJsonResponse(payload) {
+  return ContentService.createTextOutput(JSON.stringify(payload))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doOptions(e) {
+  return ContentService.createTextOutput("").setMimeType(ContentService.MimeType.TEXT);
+}
+
+function initializeSheetFormat() {
+  sheetBooking.getRange(2, 3, sheetBooking.getMaxRows() - 1).setNumberFormat('@STRING@');
+  sheetBooking.getRange(2, 5, sheetBooking.getMaxRows() - 1).setNumberFormat('@STRING@');
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function isValidMobile(num) {
+  return /^09\d{8}$/.test(num);
+}
+
+function isValidLandline(num) {
+  return /^(0(?:2|3|4|5|6|7|8|82|836|89))-?\d{6,8}$/.test(num);
+}
+
+function toMinutes(timestr) {
+  const [h, m] = timestr.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function normalizeTime(raw) {
+  if (raw instanceof Date) {
+    const h = raw.getHours();
+    const m = raw.getMinutes();
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  }
+  const tryDate = new Date(raw);
+  if (!isNaN(tryDate)) {
+    const h = tryDate.getHours();
+    const m = tryDate.getMinutes();
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  }
+  return String(raw).trim();
+}
+
+function updateBookingSummary() {
+  const { maxPerSlot } = getSettings();
+  const data = sheetBooking.getDataRange().getValues();
+  const validStatuses = ['待確認', '已確認'];
+  const slotMap = {};
+  TIME_SLOTS.forEach(slot => slotMap[slot] = []);
+
+  for (let i = 1; i < data.length; i++) {
+    const [token, name, email, phone, timeslot, status, , note] = data[i];
+    if (validStatuses.includes(status) && slotMap[timeslot]?.length < maxPerSlot) {
+      slotMap[timeslot].push([token, name, email, phone, status, note || '']);
+    }
+  }
+
+  const summaryData = [];
+  TIME_SLOTS.forEach(slot => {
+    const bookings = slotMap[slot];
+    for (let i = 0; i < maxPerSlot; i++) {
+      const [token, name, email, phone, status, note] = bookings[i] || [];
+      summaryData.push([
+        slot,
+        token || '',
+        name || '',
+        email || '',
+        phone ? `'${String(phone)}` : '',
+        status || '',
+        note || ''
+      ]);
+    }
+  });
+
+  const lastRow = sheetSummary.getLastRow();
+  if (lastRow > 1) sheetSummary.getRange(2, 1, lastRow - 1, 7).clearContent();
+  if (summaryData.length > 0) sheetSummary.getRange(2, 1, summaryData.length, 7).setValues(summaryData);
+}
+
+function doPost(e) {
+  // 1. 取得腳本鎖定物件
+  const lock = LockService.getScriptLock();
+  // 設定等待鎖定的時間上限（例如 10 秒 = 10000 毫秒）
+  const LOCK_WAIT_TIMEOUT = 10000; 
+  
+  try {
+    const data = JSON.parse(e.postData.contents);
+    const { name, email, phone, timeslot } = data;
+    
+    // --- 可以在鎖定前先進行不涉及試算表存取的基本驗證 ---
+    if (!name || !email || !phone || !timeslot) throw new Error("缺少必要欄位");
+    if (!isValidEmail(email)) return corsJsonResponse({ status: 'error', message: 'Email 格式不正確，請重新輸入' });
+    if (!isValidMobile(phone) && !isValidLandline(phone)) return corsJsonResponse({ status: 'error', message: '電話格式不正確' });
+
+    // 2. 等待取得鎖定 (此處是關鍵，確保多個請求會排隊等待)
+    lock.waitLock(LOCK_WAIT_TIMEOUT); 
+    
+    // ===========================================
+    // START: 競爭條件的「關鍵區塊」
+    // (所有讀取/寫入試算表的邏輯都必須在這裡面)
+    // ===========================================
+    
+    const { maxPerSlot, activityDate, activityPlace, activityContact } = getSettings();
+    // 重新讀取試算表中的所有資料 (確保是最新狀態)
+    const allRows = sheetBooking.getDataRange().getValues();
+    const invalidStates = ["已取消", "回覆逾期", "已拒絕"];
+
+    // 重新檢查重複預約 (讀取 Sheet)
+    const emailExists = allRows.some(row => row[2] === email && !invalidStates.includes(row[5]));
+    const phoneExists = allRows.some(row => row[3] === phone && !invalidStates.includes(row[5]));
+    if (emailExists || phoneExists) {
+      const field = emailExists && phoneExists ? "電子郵件與電話" : emailExists ? "電子郵件" : "電話";
+      // **注意：在回傳錯誤之前，必須先釋放鎖定**
+      lock.releaseLock(); 
+      return corsJsonResponse({ status: 'error', message: `此${field}已預約過` });
+    }
+
+    // 重新檢查名額 (讀取 Sheet，確保在鎖定內進行)
+    const currentCount = allRows.filter(row => row[4] === timeslot && ["待確認", "已確認"].includes(row[5])).length;
+    if (currentCount >= maxPerSlot) {
+      // **注意：在回傳額滿訊息之前，必須先釋放鎖定**
+      lock.releaseLock(); 
+      return corsJsonResponse({ status: 'error', message: '此時段已額滿' });
+    }
+
+    // 寫入預約資料 (寫入 Sheet，這是原子操作的結尾)
+    const now = new Date();
+    const id = `Q${Math.floor((now.getMonth() + 3) / 3)}-${now.getFullYear()}-${Utilities.getUuid().slice(0, 8)}`;
+    const values = [id, name, email, phone, timeslot, '待確認', now, ''];
+
+    sheetBooking.getRange(sheetBooking.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+    sheetBooking.getRange(sheetBooking.getLastRow(), 4).setNumberFormat('@STRING@');
+    sheetBooking.getRange(sheetBooking.getLastRow(), 5).setNumberFormat('@STRING@');
+
+    // 更新總表 (寫入 Sheet)
+    updateBookingSummary();
+    
+    // 3. 釋放鎖定 (在成功完成所有寫入操作後釋放)
+    lock.releaseLock(); 
+    
+    // ===========================================
+    // END: 競爭條件的「關鍵區塊」
+    // ===========================================
+
+    // 4. 寄送郵件 (不涉及 Sheet 寫入，可在鎖定釋放後執行)
+    const confirmUrl = `https://blood-booking.vercel.app/confirm?token=${id}`;
+    const cancelUrl = `https://blood-booking.vercel.app/cancel?token=${id}`;
+    // 注意：已修正原程式碼中 mapUrl 的錯誤字串插值寫法
+    const mapUrl = `https://www.google.com/maps/search/?api=1&query=$${encodeURIComponent(activityPlace)}`;
+
+    MailApp.sendEmail({
+      to: email,
+      subject: '🩸 捐血預約確認通知',
+      htmlBody: `
+        <p>親愛的 ${name}，</p>
+        <p>感謝您使用本系統預約於 ${activityDate.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' })} 舉辦的捐血活動</p>
+        <p>本次捐血地點為： <a href="${mapUrl}">${activityPlace}</a></p>
+        <p>您已申請預約 ${timeslot} 捐血時段，請點選下方連結完成確認：</p>
+        <p><a href="${confirmUrl}">👉 點我完成預約確認</a></p>
+        <p>若您希望取消此次預約，可點選：<a href="${cancelUrl}">取消預約</a></p>
+        <p>請您於預約時間<strong>10分鐘</strong>前至捐血地點完成報到</p>
+        <p>預約將為您保留<strong>15分鐘</strong>，若超時則將取消預約資料並需改為現場抽號碼牌</p>
+        <p>感謝配合，並誠摯謝謝您的熱心捐血！</p>
+        <p>聯絡資訊：請私訊<a href="${activityContact}">良全預拌混凝土粉絲專頁</a></p>`
+    });
+
+    return corsJsonResponse({ status: 'success', id });
+
+  } catch (error) {
+    // 5. 錯誤處理：如果程式碼在取得鎖定後發生錯誤 (例如 sheetBooking.getDataRange() 失敗)，
+    // 必須確保鎖定被釋放，否則其他請求會永遠被鎖住。
+    if (lock.hasLock()) {
+      lock.releaseLock();
+    }
+    
+    let errorMessage = error.message;
+    // 如果是鎖定等待超時的錯誤，給予友善提示
+    if (error.message.includes('Timeout')) {
+      errorMessage = "系統繁忙，請稍後再試。";
+    }
+
+    return corsJsonResponse({ status: 'error', message: errorMessage });
+  }
+}
+
+function doGet(e) {
+  const { type, token } = e.parameter;
+  if (!type) return corsJsonResponse({ status: 'error', message: '缺少 type' });
+
+  const { maxPerSlot, startDate, activityDate, activityPlace, activityContact, promoImage, promoLink, secondPromoImage, secondPromoLink } = getSettings();
+  const data = sheetBooking.getDataRange().getValues();
+  const now = new Date();
+
+  if (type === 'confirm' || type === 'cancel') {
+    if (!token) return corsJsonResponse({ status: 'error', message: '缺少 token' });
+    const rowIndex = data.findIndex(row => row[0] === token);
+    if (rowIndex === -1) return corsJsonResponse({ status: 'error', message: '查無預約資料' });
+    const status = data[rowIndex][5];
+    if (type === 'confirm' && status === '待確認') {
+      sheetBooking.getRange(rowIndex + 1, 6).setValue('已確認');
+      sheetBooking.getRange(rowIndex + 1, 7).setValue(new Date());
+      updateBookingSummary();
+      return corsJsonResponse({ status: 'success', message: '預約確認成功' });
+    } else if (type === 'confirm' && status === '已取消') {
+      return corsJsonResponse({ status: 'canceled', message: '預約已取消' });
+    } else if (type === 'cancel' && (status === '待確認' || status === '已確認')) {
+      sheetBooking.getRange(rowIndex + 1, 6).setValue('已取消');
+      sheetBooking.getRange(rowIndex + 1, 7).setValue(new Date());
+      updateBookingSummary();
+      return corsJsonResponse({ status: 'success', message: '預約已取消' });
+    } else {
+      return corsJsonResponse({ status: 'info', message: '狀態不需操作' });
+    }
+  }
+
+  if (type === 'availability') {
+    const capacityMap = {};
+    TIME_SLOTS.forEach(slot => capacityMap[slot] = maxPerSlot);
+
+    for (let i = 1; i < data.length; i++) {
+      const [ , , , , rawSlot, status ] = data[i];
+      const timeSlot = normalizeTime(rawSlot);
+      if (["待確認", "已確認"].includes(status) && TIME_SLOTS.includes(timeSlot)) {
+        capacityMap[timeSlot] = Math.max(0, capacityMap[timeSlot] - 1);
+      }
+    }
+
+    const bookingClosed = now >= new Date(activityDate.getTime());
+    const notYetOpen = now < startDate;
+
+    return corsJsonResponse({
+      status: "success",
+      data: capacityMap,
+      bookingClosed,
+      notYetOpen,
+      activityInfo: {
+        date: Utilities.formatDate(activityDate, "Asia/Taipei", "yyyy/MM/dd"),
+        place: activityPlace,
+        contact: activityContact,
+        startDate: Utilities.formatDate(startDate, "Asia/Taipei", "yyyy/MM/dd"),
+        promoImage: promoImage,
+        promoLink: promoLink,
+        secondPromoImage: secondPromoImage,
+        secondPromoLink: secondPromoLink,
+      }
+    });
+  }
+
+  return corsJsonResponse({ status: 'error', message: '未知的請求類型' });
+}
+
+function sendReminderBeforeEvent() {
+  const { activityDate, activityPlace, activityContact } = getSettings();
+  const today = new Date();
+  const reminderDay = new Date(activityDate);
+  reminderDay.setDate(activityDate.getDate() - 1);
+  if (today.toDateString() !== reminderDay.toDateString()) return;
+
+  const data = sheetBooking.getDataRange().getValues();
+  const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activityPlace)}`;
+
+  data.forEach((row, i) => {
+    if (i === 0) return;
+    const [id, name, email, , timeslot, status] = row;
+    if (status !== '已確認') return;
+
+    MailApp.sendEmail({
+      to: email,
+      subject: '📢 捐血提醒通知（明日活動）',
+      htmlBody: `<p>親愛的 ${name}，</p>
+        <p>感謝您預約參加我們的捐血活動！以下為明日活動資訊，請準時前往：</p>
+        <ul>
+          <li><strong>預約時段：</strong> ${timeslot}</li>
+          <li><strong>活動地點：</strong> <a href="${mapUrl}">${activityPlace}</a><br>
+        </ul>
+        <p>若您無法前來，請儘早告知以便釋出名額。</p>
+        <p>謝謝您支持捐血活動，期待與您見面！</p>
+        <p>聯絡資訊：請私訊<a href="${activityContact}">良全預拌混凝土粉絲專頁</a></p>`
+    });
+  });
+}
+
+function checkExpiredBookings() {
+  const { activityDate, activityContact } = getSettings();
+  const today = new Date();
+  const deadlineDate = new Date(activityDate);
+  deadlineDate.setDate(activityDate.getDate());
+
+  const data = sheetBooking.getDataRange().getValues();
+
+  data.forEach((row, i) => {
+    if (i === 0) return;
+    const [id, name, email, , timeslot, status, createTime] = row;
+    if (status !== '待確認') return;
+
+    const created = new Date(createTime);
+    const deadline = new Date(Math.min(created.getTime() + 7 * 24 * 60 * 60 * 1000, deadlineDate.getTime()));
+    const daysLeft = Math.ceil((deadline - today) / (1000 * 60 * 60 * 24));
+
+    if (daysLeft === 1) {
+      MailApp.sendEmail({
+        to: email,
+        subject: '🔔 捐血預約確認提醒',
+        htmlBody: `<p>親愛的 ${name}，</p>
+          <p>請盡速完成您於 <strong>${timeslot}</strong> 的捐血預約確認，確認截止日為 <strong>${deadline.toLocaleDateString('zh-TW')}</strong>：</p>
+          <p><a href="https://blood-booking.vercel.app/confirm?token=${id}">✅ 點我完成預約確認</a></p>
+          <p>若您已不克前來，可忽略此信，或點此<a href="https://blood-booking.vercel.app/cancel?token=${id}">取消預約</a>。</p>
+          <p>聯絡資訊：請私訊<a href="${activityContact}">良全預拌混凝土粉絲專頁</a></p>`
+      });
+    } else if (daysLeft < 0) {
+      sheetBooking.getRange(i + 1, 6).setValue('回覆逾期');
+      sheetBooking.getRange(i + 1, 7).setValue(new Date());
+      MailApp.sendEmail({
+        to: email,
+        subject: '❌ 預約已取消（逾期未確認）',
+        htmlBody: `<p>親愛的 ${name}，</p>
+          <p>由於您未於期限內完成捐血活動的預約確認，您預約的 <strong>${timeslot}</strong> 時段已被系統自動取消。</p>
+          <p>若仍想參與，可<a href="https://blood-booking.vercel.app">重新預約</a>尚有空位的時段。感謝您的支持！</p>
+          <p>聯絡資訊：請私訊<a href="${activityContact}">良全預拌混凝土粉絲專頁</a></p>`
+      });
+    }
+  });
+}
