@@ -4,10 +4,6 @@ const sheetBooking = ss.getSheetByName('BookingData');
 const sheetSetting = ss.getSheetByName('設定');
 const sheetSummary = ss.getSheetByName('BookingSummary');
 
-const TIME_SLOTS = [
-  "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30",
-  "13:00", "13:30", "14:00", "14:30", "15:00", "15:30", "16:00"];
-
 function getSettings() {
   function toUcViewUrl(url) {
     if (!url) return "";
@@ -29,6 +25,9 @@ function getSettings() {
     promoLink: sheetSetting.getRange('C14').getValue(),
     secondPromoImage: toUcViewUrl(String(sheetSetting.getRange('C15').getValue() || "")),
     secondPromoLink: sheetSetting.getRange('C16').getValue(),
+    slotStartTime: normalizeTime(sheetSetting.getRange('C6').getValue()),
+    slotEndTime: normalizeTime(sheetSetting.getRange('C7').getValue()),
+    slotIntervalMinutes: sheetSetting.getRange('C8').getValue() || 30, // 預設 30 分鐘間隔
   };
 }
 
