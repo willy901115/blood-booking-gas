@@ -20,6 +20,7 @@ function getSettings() {
   return {
     activityDate: new Date(Utilities.formatDate(sheetSetting.getRange('C2').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
     startDate: new Date(Utilities.formatDate(sheetSetting.getRange('C3').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
+    bookingCutoffDate: new Date(Utilities.formatDate(sheetSetting.getRange('C4').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
     slotStartTime: normalizeTime(sheetSetting.getRange('C6').getValue()),
     slotEndTime: normalizeTime(sheetSetting.getRange('C7').getValue()),
     slotIntervalMinutes: sheetSetting.getRange('C8').getValue() || 30, // 預設 30 分鐘間隔
@@ -297,8 +298,8 @@ function doGet(e) {
 
     // 欄位: [id, name, email, phone, timeslot, status, createTime]
     const [id, name, email, phone, timeslot, status, createTime] = data[rowIndex];
-    const { activityDate } = getSettings();
-    const deadlineDate = new Date(activityDate);
+    const { bookingCutoffDate } = getSettings();
+    const deadlineDate = new Date(bookingCutoffDate);
     
     // 計算截止日期：取 (created + 7天) 和 (activityDate) 中較早者
     const created = new Date(createTime);
@@ -336,7 +337,7 @@ function doGet(e) {
       }
     }
 
-    const bookingClosed = now >= new Date(activityDate.getTime());
+    const bookingClosed = now >= new Date(bookingCutoffDate.getTime());
     const notYetOpen = now < startDate;
 
     return corsJsonResponse({
@@ -393,10 +394,10 @@ function sendReminderBeforeEvent() {
 }
 
 function checkExpiredBookings() {
-  const { activityDate, activityContact } = getSettings();
+  const { bookingCutoffDate, activityContact } = getSettings();
   const today = new Date();
-  const deadlineDate = new Date(activityDate);
-  deadlineDate.setDate(activityDate.getDate());
+  const deadlineDate = new Date(bookingCutoffDate);
+  deadlineDate.setDate(bookingCutoffDate.getDate());
 
   const data = sheetBooking.getDataRange().getValues();
 
