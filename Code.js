@@ -182,8 +182,9 @@ function doPost(e) {
     // 4. 寄送郵件 (不涉及 Sheet 寫入，可在鎖定釋放後執行)
     const confirmUrl = `https://blood-booking.vercel.app/confirm?token=${id}`;
     const cancelUrl = `https://blood-booking.vercel.app/cancel?token=${id}`;
-    // 注意：已修正原程式碼中 mapUrl 的錯誤字串插值寫法
-    const mapUrl = `https://www.google.com/maps/search/?api=1&query=$${encodeURIComponent(activityPlace)}`;
+    
+    // ✅ 修正地圖 URL 建構錯誤
+    const mapUrl = `https://maps.google.com/maps?q=${encodeURIComponent(activityPlace)}`;
 
     MailApp.sendEmail({
       to: email,
@@ -249,6 +250,40 @@ function doGet(e) {
       return corsJsonResponse({ status: 'info', message: '狀態不需操作' });
     }
   }
+  
+  // ✅ 新增：處理 type=summary 請求
+  if (type === 'summary') {
+    if (!token) return corsJsonResponse({ status: 'error', message: '缺少 token' });
+
+    const rowIndex = data.findIndex(row => row[0] === token);
+    if (rowIndex === -1) return corsJsonResponse({ status: 'error', message: '查無預約資料' });
+
+    // 欄位: [id, name, email, phone, timeslot, status, createTime]
+    const [id, name, email, phone, timeslot, status, createTime] = data[rowIndex];
+    const { activityDate } = getSettings();
+    const deadlineDate = new Date(activityDate);
+    
+    // 計算截止日期：取 (created + 7天) 和 (activityDate) 中較早者
+    const created = new Date(createTime);
+    const deadlineTimestamp = Math.min(created.getTime() + 7 * 24 * 60 * 60 * 1000, deadlineDate.getTime());
+    
+    // 轉換為 ISO 格式方便前端解析
+    const deadline = new Date(deadlineTimestamp).toISOString(); 
+    
+    return corsJsonResponse({ 
+      status: 'success', 
+      data: {
+        bookingId: id, 
+        name, 
+        email, 
+        // 移除 GAS 為了儲存數字格式而加的單引號
+        phone: String(phone).replace(/^'/, ''), 
+        timeslot, 
+        status, 
+        deadline 
+      }
+    });
+  }
 
   if (type === 'availability') {
     const capacityMap = {};
@@ -294,7 +329,8 @@ function sendReminderBeforeEvent() {
   if (today.toDateString() !== reminderDay.toDateString()) return;
 
   const data = sheetBooking.getDataRange().getValues();
-  const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activityPlace)}`;
+  // ✅ 修正地圖 URL 建構錯誤
+  const mapUrl = `https://maps.google.com/maps?q=${encodeURIComponent(activityPlace)}`;
 
   data.forEach((row, i) => {
     if (i === 0) return;
