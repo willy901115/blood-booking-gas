@@ -1,417 +1,462 @@
-// ✅ 全域變數與常數
-const ss = SpreadsheetApp.getActiveSpreadsheet();
-const sheetBooking = ss.getSheetByName('BookingData');
-const sheetSetting = ss.getSheetByName('設定');
-const sheetSummary = ss.getSheetByName('BookingSummary');
+import { useEffect, useState, useMemo } from "react"; 
+import { useNavigate } from "react-router-dom";
 
-function getSettings() {
-  function toUcViewUrl(url) {
-    if (!url) return "";
-    var m =
-      url.match(/[?&]id=([a-zA-Z0-9_-]{10,})/) ||
-      url.match(/\/d\/([a-zA-Z0-9_-]{10,})(?:[\/?]|$)/) ||
-      url.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]{10,})/);
-    var id = m ? m[1] : "";
-    return id ? ("https://drive.google.com/uc?export=view&id=" + id) : url;
-  }
-  
-  return {
-    activityDate: new Date(Utilities.formatDate(sheetSetting.getRange('C2').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
-    startDate: new Date(Utilities.formatDate(sheetSetting.getRange('C3').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
-    bookingCutoffDate: new Date(Utilities.formatDate(sheetSetting.getRange('C4').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
-    slotStartTime: normalizeTime(sheetSetting.getRange('C6').getValue()),
-    slotEndTime: normalizeTime(sheetSetting.getRange('C7').getValue()),
-    slotIntervalMinutes: sheetSetting.getRange('C8').getValue() || 30, // 預設 30 分鐘間隔
-    maxPerSlot: sheetSetting.getRange('C9').getValue(),
-    activityPlace: sheetSetting.getRange('C10').getValue(),
-    activityMapUrl: sheetSetting.getRange('C11').getValue(), // <== 【新增】地圖連結/嵌入碼 URL
-    promoText: sheetSetting.getRange('C12').getValue(),
-    activityContact: sheetSetting.getRange('C14').getValue(),
-    promoImage: toUcViewUrl(String(sheetSetting.getRange('C15').getValue() || "")),
-    promoLink: sheetSetting.getRange('C16').getValue(),
-    secondPromoImage: toUcViewUrl(String(sheetSetting.getRange('C17').getValue() || "")),
-    secondPromoLink: sheetSetting.getRange('C18').getValue(),
+// ⬇️ 工具：清洗字串 + 轉直連 Drive URL
+function sanitize(s?: string) {
+  return (s ?? "").toString().trim().replace(/[\u200B-\u200D\uFEFF]/g, "");
+}
+function toDirectDriveUrl(url?: string) {
+  const u = sanitize(url);
+  if (!u) return u;
+  const m = u.match(/\/d\/([a-zA-Z0-9_-]{10,})\b/);
+  return m ? `https://drive.google.com/uc?export=view&id=${m[1]}` : u;
+}
+
+export default function Home() {
+  const navigate = useNavigate();
+  const [availability, setAvailability] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [bookingClosed, setBookingClosed] = useState(false);
+  const [notYetOpen, setNotYetOpen] = useState(false);
+  // 💡 UPDATE: 新增 bookingCutoffDate 欄位
+  const [activityInfo, setActivityInfo] = useState<{
+    date: string;
+    bookingCutoffDate: string; // ✅ 新增預約截止日期
+    place: string;
+    placeMapUrl?: string; // <== 【新增】地圖連結/嵌入碼 URL 欄位
+    contact: string;
+    startDate: string;
+    placeurl: string;
+    promoImage?: string; 
+    promoLink?: string;  
+    secondPromoImage?: string; 
+    secondPromoLink?: string;  
+    promoText?: string; // ✅ NEW: 活動宣傳文字
+  } | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/availability", { credentials: "same-origin" });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status} ${res.statusText} :: ${text.slice(0, 200)}`);
+        }
+        const data = await res.json();
+        console.log("📦 後端完整回傳內容：", data);
+
+        if (data?.activityInfo) {
+
+          const { place, promoImage, promoLink, secondPromoImage, secondPromoLink, bookingCutoffDate, placeMapUrl, promoText, ...rest } = data.activityInfo;
+          
+          const finalPlaceUrl = placeMapUrl || "";
+
+          const finalPromoImage = toDirectDriveUrl(promoImage);
+          const finalPromoLink  = sanitize(promoLink);
+          const finalSecondPromoImage = toDirectDriveUrl(secondPromoImage);
+          const finalSecondPromoLink  = sanitize(secondPromoLink);
+
+          setActivityInfo({
+            ...rest,
+            place,
+            bookingCutoffDate,
+            placeMapUrl,
+            placeurl: finalPlaceUrl,
+            promoText: sanitize(promoText),
+            ...(finalPromoImage ? { promoImage: finalPromoImage } : {}),
+            ...(finalPromoLink  ? { promoLink:  finalPromoLink  } : {}),
+            ...(finalSecondPromoImage ? { secondPromoImage: finalSecondPromoImage } : {}),
+            ...(finalSecondPromoLink  ? { secondPromoLink:  finalSecondPromoLink  } : {}),
+          });
+
+          console.log("🖼 promoImage(raw):", promoImage);
+          console.log("🖼 promoImage(final):", finalPromoImage);
+          console.log("🔗 promoLink(final):", finalPromoLink);
+        } else {
+          setActivityInfo(null);
+        }
+
+        // 狀態開關
+        setNotYetOpen(!!data?.notYetOpen);
+        setBookingClosed(!!data?.bookingClosed);
+
+        // 名額
+        if (!data?.notYetOpen && !data?.bookingClosed && data?.data) {
+          setAvailability(data.data);
+        } else {
+          setAvailability({});
+        }
+      } catch (err) {
+        console.error("❌ 取得時段資料失敗:", err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const handleBooking = (time: string) => {
+    navigate(`/book?slot=${encodeURIComponent(time)}`);
   };
-}
 
-function corsJsonResponse(payload) {
-  return ContentService.createTextOutput(JSON.stringify(payload))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function doOptions(e) {
-  return ContentService.createTextOutput("").setMimeType(ContentService.MimeType.TEXT);
-}
-
-function initializeSheetFormat() {
-  sheetBooking.getRange(2, 3, sheetBooking.getMaxRows() - 1).setNumberFormat('@STRING@');
-  sheetBooking.getRange(2, 5, sheetBooking.getMaxRows() - 1).setNumberFormat('@STRING@');
-}
-
-function isValidEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function isValidMobile(num) {
-  return /^09\d{8}$/.test(num);
-}
-
-function isValidLandline(num) {
-  return /^(0(?:2|3|4|5|6|7|8|82|836|89))-?\d{6,8}$/.test(num);
-}
-
-function toMinutes(timestr) {
-  if (!timestr || typeof timestr !== 'string') return NaN;
-  const match = timestr.match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return NaN;
-  const [h, m] = [Number(match[1]), Number(match[2])];
-  return h * 60 + m;
-}
-
-function normalizeTime(raw) {
-  if (raw instanceof Date) {
-    const h = raw.getHours();
-    const m = raw.getMinutes();
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-  }
-  const rawStr = String(raw).trim();
-  const tryDate = new Date(rawStr);
-  if (!isNaN(tryDate) && rawStr.includes(':')) {
-    const h = tryDate.getHours();
-    const m = tryDate.getMinutes();
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-  }
-  return rawStr;
-}
-
-function generateTimeSlots() {
-  const { slotStartTime, slotEndTime, slotIntervalMinutes } = getSettings();
+  const slotsToDisplay = useMemo(() => {
+    const slots = Object.keys(availability);
+    return slots.sort();
+  }, [availability]);
   
-  const startTimeMin = toMinutes(slotStartTime);
-  const endTimeMin = toMinutes(slotEndTime);
-  const interval = Number(slotIntervalMinutes);
-
-  if (isNaN(startTimeMin) || isNaN(endTimeMin) || isNaN(interval) || interval <= 0 || startTimeMin >= endTimeMin) {
-    Logger.log("Invalid time slot settings. Returning empty array.");
-    return []; 
-  }
-
-  const slots = [];
-  for (let currentMin = startTimeMin; currentMin < endTimeMin; currentMin += interval) {
-    const hours = Math.floor(currentMin / 60);
-    const minutes = currentMin % 60;
-    slots.push(`${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`);
-  }
+  // ✅ FIX: 定義輔助變數並用於 JSX 條件中，不再被 TS 認為是未使用的區域變數
+  const isAvailable = !loading && !bookingClosed && !notYetOpen;
+  const image1Used = Boolean(activityInfo?.promoImage && sanitize(activityInfo.promoImage));
+  const link1Used = Boolean(activityInfo?.promoLink && sanitize(activityInfo.promoLink));
+  const image2Used = Boolean(activityInfo?.secondPromoImage && sanitize(activityInfo.secondPromoImage));
+  const link2Used = Boolean(activityInfo?.secondPromoLink && sanitize(activityInfo.secondPromoLink));
   
-  return slots;
-}
 
+  return (
+    <div className="min-h-screen bg-gray-100 p-8">
+      <h1 className="mb-6 flex items-center justify-center gap-2 text-2xl font-bold">
+        <span role="img" aria-label="血滴">🩸</span>
+        <span>捐血活動預約系統</span>
+      </h1>
 
-function updateBookingSummary() {
-  const TIME_SLOTS = generateTimeSlots(); 
-  const { maxPerSlot } = getSettings();
-  const data = sheetBooking.getDataRange().getValues();
-  const validStatuses = ['待確認', '已確認'];
-  const slotMap = {};
-  TIME_SLOTS.forEach(slot => slotMap[slot] = []);
+      {activityInfo && (
+        <div className="mb-6 text-center bg-white p-4 rounded-lg shadow">
+          <h1 className="text-2xl font-bold mb-6 text-center">本次捐血活動資訊</h1>
+          <p className="text-lg font-medium flex items-center justify-center">
+            <span role="img" aria-label="活動日期" className="mr-2">📅</span>
+            活動日期：<strong className="font-extrabold text-700 ml-1">{activityInfo.date}</strong>
+          </p>
+          <p className="text-base mt-2">📍 地點：{activityInfo.place}</p>
+          <p className="text-base mt-2">
+            聯絡資訊：請私訊
+            <a href={activityInfo.contact} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline ml-1">
+              良全預拌混凝土粉絲專頁
+            </a>
+          </p>
+          {/* 💡 UPDATE: 使用後端提供的宣傳文字，如果存在 */}
+          {activityInfo.promoText && (
+            <p className="text-base mt-2">
+              {activityInfo.promoText}
+            </p>
+          )}
+          <p className="text-base mt-2">
+            {/* 💡 UPDATE 1: 顯示預約截止日期 */}
+            {!bookingClosed && activityInfo.bookingCutoffDate ? (
+              <>
+                預約只開放到
+                <strong className="mx-1 font-extrabold text-red-700">
+                  {activityInfo.bookingCutoffDate} 23:59 截止
+                </strong>
+                ，名額有限，歡迎踴躍報名
+              </>
+            ) : (
+              <>
+                名額已滿，歡迎加入
+                <a
+                  href={activityInfo.contact}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 underline mx-1"
+                >
+                  粉專
+                </a>
+                參與下次活動
+              </>
+            )}
+          </p>
+        </div>
+      )}
 
-  for (let i = 1; i < data.length; i++) {
-    const [token, name, email, phone, timeslot, status, , note] = data[i];
-    if (TIME_SLOTS.includes(timeslot) && validStatuses.includes(status) && slotMap[timeslot]?.length < maxPerSlot) {
-      slotMap[timeslot].push([token, name, email, phone, status, note || '']);
-    }
-  }
+      {activityInfo?.placeurl && (
+        <div className="mt-6">
+          <h2 className="text-base font-semibold py-6">🗺 活動地點地圖</h2>
+          <iframe
+            title="活動地點地圖"
+            src={activityInfo.placeurl}
+            width="100%"
+            height="300"
+            style={{ border: 0 }}
+            allowFullScreen
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+            className="rounded-lg shadow"
+          ></iframe>
+        </div>
+      )}
 
-  const summaryData = [];
-  TIME_SLOTS.forEach(slot => {
-    const bookings = slotMap[slot];
-    for (let i = 0; i < maxPerSlot; i++) {
-      const [token, name, email, phone, status, note] = bookings?.[i] || [];
-      summaryData.push([
-        slot,
-        token || '',
-        name || '',
-        email || '',
-        phone ? `'${String(phone)}` : '',
-        status || '',
-        note || ''
-      ]);
-    }
-  });
+      {loading ? (
+        <div className="text-center">載入中...</div>
+      ) : bookingClosed ? (
+        <div className="text-center text-red-600 font-semibold text-lg py-6 animate-pulse">
+          本次活動的預約已截止，歡迎關注下一次捐血活動！
+        </div>
+      ) : notYetOpen ? (
+        <div className="text-center text-yellow-600 font-semibold text-lg py-6 animate-pulse">
+          預約尚未開放，請於
+          <strong className="font-extrabold text-red-700 mx-1">{activityInfo?.startDate}</strong>
+          後再試，謝謝您的耐心等待。
+        </div>
+      ) : (
+        <>
+          <h1 className="text-2xl font-bold py-6 text-center">請選擇適合您預約的捐血時段</h1>
+          <section className="mx-auto max-w-4xl mt-6 mb-8">
+            <div className="bg-white rounded-lg shadow divide-y">
+              <div className="p-5">
+                <h2 className="text-lg font-semibold mb-3">📌 預約注意事項</h2>
+                <ul className="list-disc pl-6 space-y-2 text-gray-700 text-sm md:text-base">
+                  <li>每人僅能預約一個時段；若取消原預約後，才可重新預約。</li>
+                  <li>
+                    請於預約時段
+                    <strong className="font-extrabold text-red-700 mx-1">10分鐘</strong>
+                    前抵達現場完成報到與基本檢查。
+                  </li>
+                  <li>
+                    預約資格僅會保留到預約時段後
+                    <strong className="font-extrabold text-red-700 mx-1">15分鐘</strong>
+                    。
+                  </li>
+                  <li>逾時雖將取消預約資格，但仍可於現場抽取號碼牌參與捐血。</li>
+                  <li>請攜帶可辨識身分之證件（如身分證、健保卡、駕照）。</li>
+                  <li>請於捐血前一晚睡眠充足並進食，避免空腹與飲酒。</li>
+                  <li>名額採即時更新，顯示「已額滿」之時段無法點選預約。</li>
+                  {/* 💡 UPDATE 2: 顯示預約確認的截止日 */}
+                  <li>
+                    預約後需在
+                    <strong className="font-extrabold text-red-700 mx-1">
+                      「申請後7天內」或「預約截止日（{activityInfo?.bookingCutoffDate}）」
+                    </strong>
+                    （取較早者）於郵件內點選預約確認連結，逾期將自動取消名額。
+                  </li>
+                  <li>若在確認截止日前一日仍未完成確認，系統會再寄發提醒通知。</li>
+                  <li>取消預約可透過 Email中的「取消連結」直接辦理；取消後名額將立即釋出。</li>
+                </ul>
+              </div>
 
-  const lastRow = sheetSummary.getLastRow();
-  if (lastRow > 1) sheetSummary.getRange(2, 1, lastRow - 1, 7).clearContent();
-  if (summaryData.length > 0) sheetSummary.getRange(2, 1, summaryData.length, 7).setValues(summaryData);
-}
+              <div className="p-5">
+                <h2 className="text-lg font-semibold mb-3">✅ 預約流程</h2>
+                <ol className="list-decimal pl-6 space-y-2 text-gray-700 text-sm md:text-base">
+                  <li>在下方選擇可預約的時段（顯示剩餘名額）。</li>
+                  <li>填寫姓名、Email、手機號碼並送出。</li>
+                  <li>收到 Email通知後，於截止日前完成「點擊確認」。</li>
+                  <li>完成確認後，您將會被導向確認成功通知的網頁，即完成預約確認。</li>
+                  <li>活動當日依提醒時間抵達現場報到；如需取消，請使用通知中的取消連結。</li>
+                </ol>
+              </div>
+            </div>
+          </section>
+          
+          <br />
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {slotsToDisplay.map((slot) => { 
+              const available = availability[slot] ?? 0;
+              const isFull = available <= 0;
+              return (
+                <div
+                  key={slot}
+                  className={`border rounded-lg p-4 text-center cursor-pointer ${
+                    isFull ? "bg-gray-300 text-gray-500 cursor-not-allowed" : "bg-white hover:bg-blue-100"
+                  }`}
+                  onClick={() => !isFull && handleBooking(slot)}
+                >
+                  <div className="text-lg font-semibold">{slot}</div>
+                  <div className="text-sm">
+                    {available <= 0 ? "已額滿" : `剩餘名額：${available}`}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
 
-function doPost(e) {
-  const lock = LockService.getScriptLock();
-  const LOCK_WAIT_TIMEOUT = 10000; 
-  
-  try {
-    const data = JSON.parse(e.postData.contents);
-    const { name, email, phone, timeslot } = data;
-    
-    if (!name || !email || !phone || !timeslot) throw new Error("缺少必要欄位");
-    if (!isValidEmail(email)) return corsJsonResponse({ status: 'error', message: 'Email 格式不正確，請重新輸入' });
-    if (!isValidMobile(phone) && !isValidLandline(phone)) return corsJsonResponse({ status: 'error', message: '電話格式不正確' });
-    
-    const TIME_SLOTS = generateTimeSlots();
-    if (!TIME_SLOTS.includes(timeslot)) {
-      return corsJsonResponse({ status: 'error', message: '時段無效，請重新選擇' });
-    }
-
-    lock.waitLock(LOCK_WAIT_TIMEOUT); 
-    
-    const { maxPerSlot, activityDate, activityPlace, activityContact, activityMapUrl } = getSettings();
-    const allRows = sheetBooking.getDataRange().getValues();
-    const invalidStates = ["已取消", "回覆逾期", "已拒絕"];
-
-    const emailExists = allRows.some(row => row[2] === email && !invalidStates.includes(row[5]));
-    const phoneExists = allRows.some(row => row[3] === phone && !invalidStates.includes(row[5]));
-    if (emailExists || phoneExists) {
-      const field = emailExists && phoneExists ? "電子郵件與電話" : emailExists ? "電子郵件" : "電話";
-      lock.releaseLock(); 
-      return corsJsonResponse({ status: 'error', message: `此${field}已預約過` });
-    }
-
-    const currentCount = allRows.filter(row => row[4] === timeslot && ["待確認", "已確認"].includes(row[5])).length;
-    if (currentCount >= maxPerSlot) {
-      lock.releaseLock(); 
-      return corsJsonResponse({ status: 'error', message: '此時段已額滿' });
-    }
-
-    const now = new Date();
-    const id = `Q${Math.floor((now.getMonth() + 3) / 3)}-${now.getFullYear()}-${Utilities.getUuid().slice(0, 8)}`;
-    const values = [id, name, email, phone, timeslot, '待確認', now, ''];
-
-    sheetBooking.getRange(sheetBooking.getLastRow() + 1, 1, 1, values.length).setValues([values]);
-    sheetBooking.getRange(sheetBooking.getLastRow(), 4).setNumberFormat('@STRING@');
-    sheetBooking.getRange(sheetBooking.getLastRow(), 5).setNumberFormat('@STRING@');
-
-    updateBookingSummary();
-    
-    lock.releaseLock(); 
-    
-    const confirmUrl = `https://blood-booking.vercel.app/confirm?token=${id}`;
-    const cancelUrl = `https://blood-booking.vercel.app/cancel?token=${id}`;
-    
-    // 如果 activityMapUrl 不存在，則退回使用 activityPlace 透過 Google 搜尋的連結
-    const mapLink = activityMapUrl 
-        ? activityMapUrl 
-        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activityPlace)}`;
-
-    MailApp.sendEmail({
-      to: email,
-      subject: '🩸 捐血預約確認通知',
-      htmlBody: `
-        <p>親愛的 ${name}，</p>
-        <p>感謝您使用本系統預約於 ${activityDate.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' })} 舉辦的捐血活動</p>
-        <p>本次捐血地點為： <a href="${mapLink}">${activityPlace}</a></p>
-        <p>您已申請預約 ${timeslot} 捐血時段，請點選下方連結完成確認：</p>
-        <p><a href="${confirmUrl}">👉 點我完成預約確認</a></p>
-        <p>若您希望取消此次預約，可點選：<a href="${cancelUrl}">取消預約</a></p>
-        <p>請您於預約時間<strong>10分鐘</strong>前至捐血地點完成報到</p>
-        <p>預約將為您保留<strong>15分鐘</strong>，若超時則將取消預約資料並需改為現場抽號碼牌</p>
-        <p>感謝配合，並誠摯謝謝您的熱心捐血！</p>
-        <p>聯絡資訊：請私訊<a href="${activityContact}">良全預拌混凝土粉絲專頁</a></p>`
-    });
-
-    return corsJsonResponse({ status: 'success', id });
-
-  } catch (error) {
-    if (lock.hasLock()) {
-      lock.releaseLock();
-    }
-    
-    let errorMessage = error.message;
-    if (error.message.includes('Timeout')) {
-      errorMessage = "系統繁忙，請稍後再試。";
-    }
-
-    return corsJsonResponse({ status: 'error', message: errorMessage });
-  }
-}
-
-function doGet(e) {
-  const { type, token } = e.parameter;
-  if (!type) return corsJsonResponse({ status: 'error', message: '缺少 type' });
-
-  // 💡 NEW: 讀取 bookingCutoffDate
-  const { maxPerSlot, startDate, activityDate, activityPlace, activityMapUrl, activityContact, promoImage, promoLink, secondPromoImage, secondPromoLink, bookingCutoffDate, promoText } = getSettings();
-  const data = sheetBooking.getDataRange().getValues();
-  const now = new Date();
-
-  if (type === 'confirm' || type === 'cancel') {
-    // ... (省略 confirm/cancel 邏輯，無日期修改)
-    if (!token) return corsJsonResponse({ status: 'error', message: '缺少 token' });
-    const rowIndex = data.findIndex(row => row[0] === token);
-    if (rowIndex === -1) return corsJsonResponse({ status: 'error', message: '查無預約資料' });
-    const status = data[rowIndex][5];
-    if (type === 'confirm' && status === '待確認') {
-      sheetBooking.getRange(rowIndex + 1, 6).setValue('已確認');
-      sheetBooking.getRange(rowIndex + 1, 7).setValue(new Date());
-      updateBookingSummary();
-      return corsJsonResponse({ status: 'success', message: '預約確認成功' });
-    } else if (type === 'confirm' && status === '已取消') {
-      return corsJsonResponse({ status: 'canceled', message: '預約已取消' });
-    } else if (type === 'cancel' && (status === '待確認' || status === '已確認')) {
-      sheetBooking.getRange(rowIndex + 1, 6).setValue('已取消');
-      sheetBooking.getRange(rowIndex + 1, 7).setValue(new Date());
-      updateBookingSummary();
-      return corsJsonResponse({ status: 'success', message: '預約已取消' });
-    } else {
-      return corsJsonResponse({ status: 'info', message: '狀態不需操作' });
-    }
-  }
-  
-  if (type === 'summary') {
-    if (!token) return corsJsonResponse({ status: 'error', message: '缺少 token' });
-
-    const rowIndex = data.findIndex(row => row[0] === token);
-    if (rowIndex === -1) return corsJsonResponse({ status: 'error', message: '查無預約資料' });
-
-    const [id, name, email, phone, timeslot, status, createTime] = data[rowIndex];
-    
-    // 💡 修正：使用 bookingCutoffDate 作為最終截止日
-    const deadlineDate = new Date(bookingCutoffDate); 
-    
-    // 計算截止日期：取 (created + 7天) 和 (預約截止日) 中較早者
-    const created = new Date(createTime);
-    const deadlineTimestamp = Math.min(created.getTime() + 7 * 24 * 60 * 60 * 1000, deadlineDate.getTime());
-    
-    const deadline = new Date(deadlineTimestamp).toISOString(); 
-    
-    return corsJsonResponse({ 
-      status: 'success', 
-      data: {
-        bookingId: id, 
-        name, 
-        email, 
-        phone: String(phone).replace(/^'/, ''), 
-        timeslot, 
-        status, 
-        deadline 
-      }
-    });
-  }
-
-  if (type === 'availability') {
-    const TIME_SLOTS = generateTimeSlots(); 
-    const capacityMap = {};
-    TIME_SLOTS.forEach(slot => capacityMap[slot] = maxPerSlot);
-
-    for (let i = 1; i < data.length; i++) {
-      const [ , , , , rawSlot, status ] = data[i];
-      const timeSlot = normalizeTime(rawSlot);
-      if (TIME_SLOTS.includes(timeSlot) && ["待確認", "已確認"].includes(status)) {
-        capacityMap[timeSlot] = Math.max(0, capacityMap[timeSlot] - 1);
-      }
-    }
-
-    // 💡 修正：預約截止檢查點改為 bookingCutoffDate
-    const bookingClosed = now >= new Date(bookingCutoffDate.getTime());
-    const notYetOpen = now < startDate;
-
-    return corsJsonResponse({
-      status: "success",
-      data: capacityMap,
-      bookingClosed,
-      notYetOpen,
-      activityInfo: {
-        date: Utilities.formatDate(activityDate, "Asia/Taipei", "yyyy/MM/dd"),
-        bookingCutoffDate: Utilities.formatDate(bookingCutoffDate, "Asia/Taipei", "yyyy/MM/dd"),
-        place: activityPlace,
-        placeMapUrl: activityMapUrl, // <== 【新增】回傳地圖連結給前端
-        contact: activityContact,
-        startDate: Utilities.formatDate(startDate, "Asia/Taipei", "yyyy/MM/dd"),
-        promoImage: promoImage,
-        promoLink: promoLink,
-        secondPromoImage: secondPromoImage,
-        secondPromoLink: secondPromoLink,
-        promoText: promoText,
-      }
-    });
-  }
-
-  return corsJsonResponse({ status: 'error', message: '未知的請求類型' });
-}
-
-function sendReminderBeforeEvent() {
-  const { activityDate, activityPlace, activityMapUrl, activityContact } = getSettings();
-  const today = new Date();
-  const reminderDay = new Date(activityDate);
-  reminderDay.setDate(activityDate.getDate() - 1);
-  if (today.toDateString() !== reminderDay.toDateString()) return;
-
-  const data = sheetBooking.getDataRange().getValues();
-  const mapLink = activityMapUrl 
-        ? activityMapUrl 
-        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activityPlace)}`;
-
-  data.forEach((row, i) => {
-    if (i === 0) return;
-    const [id, name, email, , timeslot, status] = row;
-    if (status !== '已確認') return;
-
-    MailApp.sendEmail({
-      to: email,
-      subject: '📢 捐血提醒通知（明日活動）',
-      htmlBody: `<p>親愛的 ${name}，</p>
-        <p>感謝您預約參加我們的捐血活動！以下為明日活動資訊，請準時前往：</p>
-        <ul>
-          <li><strong>預約時段：</strong> ${timeslot}</li>
-          <li><strong>活動地點：</strong> <a href="${mapLink}">${activityPlace}</a><br>
-        </ul>
-        <p>若您無法前來，請儘早告知以便釋出名額。</p>
-        <p>謝謝您支持捐血活動，期待與您見面！</p>
-        <p>聯絡資訊：請私訊<a href="${activityContact}">良全預拌混凝土粉絲專頁</a></p>`
-    });
-  });
-}
-
-function checkExpiredBookings() {
-  // 💡 NEW: 讀取 bookingCutoffDate
-  const { activityContact, bookingCutoffDate } = getSettings(); 
-  const today = new Date();
-  
-  // 💡 修正：使用 bookingCutoffDate 作為最終期限
-  const deadlineDate = new Date(bookingCutoffDate); 
-  deadlineDate.setDate(bookingCutoffDate.getDate()); 
-
-  const data = sheetBooking.getDataRange().getValues();
-
-  data.forEach((row, i) => {
-    if (i === 0) return;
-    const [id, name, email, , timeslot, status, createTime] = row;
-    if (status !== '待確認') return;
-
-    const created = new Date(createTime);
-    // 💡 修正：使用 deadlineDate (即 bookingCutoffDate)
-    const deadline = new Date(Math.min(created.getTime() + 7 * 24 * 60 * 60 * 1000, deadlineDate.getTime()));
-    const daysLeft = Math.ceil((deadline - today) / (1000 * 60 * 60 * 24));
-
-    if (daysLeft === 1) {
-      MailApp.sendEmail({
-        to: email,
-        subject: '🔔 捐血預約確認提醒',
-        htmlBody: `<p>親愛的 ${name}，</p>
-          <p>請盡速完成您於 <strong>${timeslot}</strong> 的捐血預約確認，確認截止日為 <strong>${deadline.toLocaleDateString('zh-TW')}</strong>：</p>
-          <p><a href="https://blood-booking.vercel.app/confirm?token=${id}">✅ 點我完成預約確認</a></p>
-          <p>若您已不克前來，可忽略此信，或點此<a href="https://blood-booking.vercel.app/cancel?token=${id}">取消預約</a>。</p>
-          <p>聯絡資訊：請私訊<a href="${activityContact}">良全預拌混凝土粉絲專頁</a></p>`
-      });
-    } else if (daysLeft < 0) {
-      sheetBooking.getRange(i + 1, 6).setValue('回覆逾期');
-      sheetBooking.getRange(i + 1, 7).setValue(new Date());
-      MailApp.sendEmail({
-        to: email,
-        subject: '❌ 預約已取消（逾期未確認）',
-        htmlBody: `<p>親愛的 ${name}，</p>
-          <p>由於您未於期限內完成捐血活動的預約確認，您預約的 <strong>${timeslot}</strong> 時段已被系統自動取消。</p>
-          <p>若仍想參與，可<a href="https://blood-booking.vercel.app">重新預約</a>尚有空位的時段。感謝您的支持！</p>
-          <p>聯絡資訊：請私訊<a href="${activityContact}">良全預拌混凝土粉絲專頁</a></p>`
-      });
-    }
-  });
+          {/* ✅ 宣傳圖區塊改用直接定義的變數 */}
+          {isAvailable && image1Used && (
+            <div className="mt-8">
+              <div className="mx-auto w-full max-w-screen-lg">
+                {link1Used ? (
+                  <a
+                    href={activityInfo!.promoLink!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="前往活動宣傳連結（另開視窗）"
+                  >
+                    <img
+                      src={activityInfo!.promoImage!}
+                      alt="活動宣傳"
+                      className="w-full rounded-lg shadow hover:opacity-90 object-contain"
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      onLoad={() => console.log("✅ 圖片載入成功")}
+                      onError={(ev) => {
+                        const img = ev.currentTarget as HTMLImageElement;
+                    
+                        // 已嘗試次數（避免無限遞迴）
+                        const tried = Number(img.dataset.try || "0");
+                    
+                        // 從目前 src 取 Drive 檔案 ID（支援 ?id=... 或 /d/.../）
+                        const srcNow = img.src;
+                        const m =
+                          srcNow.match(/[?&]id=([a-zA-Z0-9_-]{10,})/) ||
+                          srcNow.match(/\/d\/([a-zA-Z0-9_-]{10,})\b/);
+                        const id = m ? m[1] : "";
+                    
+                        if (id && tried === 0) {
+                          // 第一次失敗 → 改用 Google 圖片 CDN（最穩）
+                          img.dataset.try = "1";
+                          // ✅ FIX: 將 http 改為 https 解決 Mixed Content 錯誤
+                          img.src = `https://googleusercontent.com/profile/picture/13${id}=s1600`;
+                          console.warn("↪️ fallback → lh3:", img.src);
+                          return;
+                        }
+                        if (id && tried === 1) {
+                          // 第二次失敗 → 改用 Drive 縮圖服務（可指定寬度）
+                          img.dataset.try = "2";
+                          img.src = `https://drive.google.com/thumbnail?id=${id}&sz=w1600`;
+                          console.warn("↪️ fallback → thumbnail:", img.src);
+                          return;
+                        }
+                    
+                        console.error("❌ 圖片載入最終失敗：", srcNow);
+                      }}
+                    />
+                  </a>
+                ) : (
+                  <img
+                    src={activityInfo!.promoImage!}
+                    alt="活動宣傳"
+                    className="w-full rounded-lg shadow hover:opacity-90 object-contain"
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    onLoad={() => console.log("✅ 圖片載入成功")}
+                    onError={(ev) => {
+                      const img = ev.currentTarget as HTMLImageElement;
+                  
+                      // 已嘗試次數（避免無限遞迴）
+                      const tried = Number(img.dataset.try || "0");
+                  
+                      // 從目前 src 取 Drive 檔案 ID（支援 ?id=... 或 /d/.../）
+                      const srcNow = img.src;
+                      const m =
+                        srcNow.match(/[?&]id=([a-zA-Z0-9_-]{10,})/) ||
+                        srcNow.match(/\/d\/([a-zA-Z0-9_-]{10,})\b/);
+                      const id = m ? m[1] : "";
+                  
+                      if (id && tried === 0) {
+                        // 第一次失敗 → 改用 Google 圖片 CDN（最穩）
+                        img.dataset.try = "1";
+                        // ✅ FIX: 將 http 改為 https 解決 Mixed Content 錯誤
+                        img.src = `https://googleusercontent.com/profile/picture/14${id}=s1600`;
+                        console.warn("↪️ fallback → lh3:", img.src);
+                        return;
+                      }
+                      if (id && tried === 1) {
+                        // 第二次失敗 → 改用 Drive 縮圖服務（可指定寬度）
+                        img.dataset.try = "2";
+                        img.src = `https://drive.google.com/thumbnail?id=${id}&sz=w1600`;
+                        console.warn("↪️ fallback → thumbnail:", img.src);
+                        return;
+                      }
+                  
+                      console.error("❌ 圖片載入最終失敗：", srcNow);
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+          {isAvailable && image2Used && (
+            <div className="mt-8">
+              <div className="mx-auto w-full max-w-screen-lg">
+                {link2Used ? (
+                  <a
+                    href={activityInfo!.secondPromoLink!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="前往活動宣傳連結（另開視窗）"
+                  >
+                    <img
+                      src={activityInfo!.secondPromoImage!}
+                      alt="活動宣傳"
+                      className="w-full rounded-lg shadow hover:opacity-90 object-contain"
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      onLoad={() => console.log("✅ 圖片載入成功")}
+                      onError={(ev) => {
+                        const img = ev.currentTarget as HTMLImageElement;
+                    
+                        // 已嘗試次數（避免無限遞迴）
+                        const tried = Number(img.dataset.try || "0");
+                    
+                        // 從目前 src 取 Drive 檔案 ID（支援 ?id=... 或 /d/.../）
+                        const srcNow = img.src;
+                        const m =
+                          srcNow.match(/[?&]id=([a-zA-Z0-9_-]{10,})/) ||
+                          srcNow.match(/\/d\/([a-zA-Z0-9_-]{10,})\b/);
+                        const id = m ? m[1] : "";
+                    
+                        if (id && tried === 0) {
+                          // 第一次失敗 → 改用 Google 圖片 CDN（最穩）
+                          img.dataset.try = "1";
+                          // ✅ FIX: 將 http 改為 https 解決 Mixed Content 錯誤
+                          img.src = `https://googleusercontent.com/profile/picture/15${id}=s1600`;
+                          console.warn("↪️ fallback → lh3:", img.src);
+                          return;
+                        }
+                        if (id && tried === 1) {
+                          // 第二次失敗 → 改用 Drive 縮圖服務（可指定寬度）
+                          img.dataset.try = "2";
+                          img.src = `https://drive.google.com/thumbnail?id=${id}&sz=w1600`;
+                          console.warn("↪️ fallback → thumbnail:", img.src);
+                          return;
+                        }
+                    
+                        console.error("❌ 圖片載入最終失敗：", srcNow);
+                      }}
+                    />
+                  </a>
+                ) : (
+                  <img
+                    src={activityInfo!.secondPromoImage!}
+                    alt="活動宣傳"
+                    className="w-full rounded-lg shadow hover:opacity-90 object-contain"
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    onLoad={() => console.log("✅ 圖片載入成功")}
+                    onError={(ev) => {
+                      const img = ev.currentTarget as HTMLImageElement;
+                  
+                      // 已嘗試次數（避免無限遞迴）
+                      const tried = Number(img.dataset.try || "0");
+                  
+                      // 從目前 src 取 Drive 檔案 ID（支援 ?id=... 或 /d/.../）
+                      const srcNow = img.src;
+                      const m =
+                        srcNow.match(/[?&]id=([a-zA-Z0-9_-]{10,})/) ||
+                        srcNow.match(/\/d\/([a-zA-Z0-9_-]{10,})\b/);
+                      const id = m ? m[1] : "";
+                  
+                      if (id && tried === 0) {
+                        // 第一次失敗 → 改用 Google 圖片 CDN（最穩）
+                        img.dataset.try = "1";
+                        // ✅ FIX: 將 http 改為 https 解決 Mixed Content 錯誤
+                        img.src = `https://googleusercontent.com/profile/picture/16${id}=s1600`;
+                        console.warn("↪️ fallback → lh3:", img.src);
+                        return;
+                      }
+                      if (id && tried === 1) {
+                        // 第二次失敗 → 改用 Drive 縮圖服務（可指定寬度）
+                        img.dataset.try = "2";
+                        img.src = `https://drive.google.com/thumbnail?id=${id}&sz=w1600`;
+                        console.warn("↪️ fallback → thumbnail:", img.src);
+                        return;
+                      }
+                  
+                      console.error("❌ 圖片載入最終失敗：", srcNow);
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
