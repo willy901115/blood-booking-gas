@@ -60,7 +60,8 @@ function getSettings() {
     activityMapUrl: sheetSetting.getRange('C11').getValue(), // <== 【新增】地圖連結/嵌入碼 URL
     promoText: sheetSetting.getRange('C12').getValue(),
     activityContact: sheetSetting.getRange('C14').getValue(),
-    promoImage: toUcViewUrl(String(sheetSetting.getRange('C15').getValue() || "")),
+    // ⬇️ UPDATE: 儲存原始連結 (不進行 toUcViewUrl 轉換，讓 doGet 處理 Base64 編碼)
+    promoImageRaw: String(sheetSetting.getRange('C15').getValue() || ""),
     promoLink: sheetSetting.getRange('C16').getValue(),
     secondPromoImage: toUcViewUrl(String(sheetSetting.getRange('C17').getValue() || "")),
     secondPromoLink: sheetSetting.getRange('C18').getValue(),
