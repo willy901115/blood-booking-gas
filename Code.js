@@ -25,6 +25,7 @@ function getSettings() {
     maxPerSlot: sheetSetting.getRange('C9').getValue(),
     activityPlace: sheetSetting.getRange('C10').getValue(),
     activityMapUrl: sheetSetting.getRange('C11').getValue(), // <== 【新增】地圖連結/嵌入碼 URL
+    promoText: sheetSetting.getRange('C12').getValue(),
     activityContact: sheetSetting.getRange('C14').getValue(),
     promoImage: toUcViewUrl(String(sheetSetting.getRange('C15').getValue() || "")),
     promoLink: sheetSetting.getRange('C16').getValue(),
@@ -328,6 +329,7 @@ function doGet(e) {
         promoLink: promoLink,
         secondPromoImage: secondPromoImage,
         secondPromoLink: secondPromoLink,
+        promoText: promoText,
       }
     });
   }
