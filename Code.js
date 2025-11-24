@@ -238,7 +238,7 @@ function doGet(e) {
   if (!type) return corsJsonResponse({ status: 'error', message: '缺少 type' });
 
   // 💡 NEW: 讀取 bookingCutoffDate
-  const { maxPerSlot, startDate, activityDate, activityPlace, activityMapUrl, activityContact, promoImage, promoLink, secondPromoImage, secondPromoLink, bookingCutoffDate } = getSettings();
+  const { maxPerSlot, startDate, activityDate, activityPlace, activityMapUrl, activityContact, promoImage, promoLink, secondPromoImage, secondPromoLink, bookingCutoffDate, promoText } = getSettings();
   const data = sheetBooking.getDataRange().getValues();
   const now = new Date();
 
