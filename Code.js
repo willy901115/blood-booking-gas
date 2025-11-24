@@ -24,11 +24,12 @@ function getSettings() {
     slotIntervalMinutes: sheetSetting.getRange('C8').getValue() || 30, // 預設 30 分鐘間隔
     maxPerSlot: sheetSetting.getRange('C9').getValue(),
     activityPlace: sheetSetting.getRange('C10').getValue(),
-    activityContact: sheetSetting.getRange('C12').getValue(),
-    promoImage: toUcViewUrl(String(sheetSetting.getRange('C13').getValue() || "")),
-    promoLink: sheetSetting.getRange('C14').getValue(),
-    secondPromoImage: toUcViewUrl(String(sheetSetting.getRange('C15').getValue() || "")),
-    secondPromoLink: sheetSetting.getRange('C16').getValue(),
+    activityMapUrl: sheetSetting.getRange('C11').getValue(), // <== 【新增】地圖連結/嵌入碼 URL
+    activityContact: sheetSetting.getRange('C14').getValue(),
+    promoImage: toUcViewUrl(String(sheetSetting.getRange('C15').getValue() || "")),
+    promoLink: sheetSetting.getRange('C16').getValue(),
+    secondPromoImage: toUcViewUrl(String(sheetSetting.getRange('C17').getValue() || "")),
+    secondPromoLink: sheetSetting.getRange('C18').getValue(),
   };
 }
 
@@ -161,7 +162,7 @@ function doPost(e) {
 
     lock.waitLock(LOCK_WAIT_TIMEOUT); 
     
-    const { maxPerSlot, activityDate, activityPlace, activityContact } = getSettings();
+    const { maxPerSlot, activityDate, activityPlace, activityContact, activityMapUrl } = getSettings();
     const allRows = sheetBooking.getDataRange().getValues();
     const invalidStates = ["已取消", "回覆逾期", "已拒絕"];
 
@@ -194,7 +195,10 @@ function doPost(e) {
     const confirmUrl = `https://blood-booking.vercel.app/confirm?token=${id}`;
     const cancelUrl = `https://blood-booking.vercel.app/cancel?token=${id}`;
     
-    const mapUrl = `https://www.google.com/search?q=https://www.google.com/maps%3Fq%3D${encodeURIComponent(activityPlace)}`;
+    // 如果 activityMapUrl 不存在，則退回使用 activityPlace 透過 Google 搜尋的連結
+    const mapLink = activityMapUrl 
+        ? activityMapUrl 
+        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activityPlace)}`;
 
     MailApp.sendEmail({
       to: email,
@@ -202,7 +206,7 @@ function doPost(e) {
       htmlBody: `
         <p>親愛的 ${name}，</p>
         <p>感謝您使用本系統預約於 ${activityDate.toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' })} 舉辦的捐血活動</p>
-        <p>本次捐血地點為： <a href="${mapUrl}">${activityPlace}</a></p>
+        <p>本次捐血地點為： <a href="${mapLink}">${activityPlace}</a></p>
         <p>您已申請預約 ${timeslot} 捐血時段，請點選下方連結完成確認：</p>
         <p><a href="${confirmUrl}">👉 點我完成預約確認</a></p>
         <p>若您希望取消此次預約，可點選：<a href="${cancelUrl}">取消預約</a></p>
@@ -233,7 +237,7 @@ function doGet(e) {
   if (!type) return corsJsonResponse({ status: 'error', message: '缺少 type' });
 
   // 💡 NEW: 讀取 bookingCutoffDate
-  const { maxPerSlot, startDate, activityDate, activityPlace, activityContact, promoImage, promoLink, secondPromoImage, secondPromoLink, bookingCutoffDate } = getSettings();
+  const { maxPerSlot, startDate, activityDate, activityPlace, activityMapUrl, activityContact, promoImage, promoLink, secondPromoImage, secondPromoLink, bookingCutoffDate } = getSettings();
   const data = sheetBooking.getDataRange().getValues();
   const now = new Date();
 
@@ -315,9 +319,9 @@ function doGet(e) {
       notYetOpen,
       activityInfo: {
         date: Utilities.formatDate(activityDate, "Asia/Taipei", "yyyy/MM/dd"),
-        // 💡 NEW: 回傳預約截止日期給前端
         bookingCutoffDate: Utilities.formatDate(bookingCutoffDate, "Asia/Taipei", "yyyy/MM/dd"),
         place: activityPlace,
+        placeMapUrl: activityMapUrl, // <== 【新增】回傳地圖連結給前端
         contact: activityContact,
         startDate: Utilities.formatDate(startDate, "Asia/Taipei", "yyyy/MM/dd"),
         promoImage: promoImage,
@@ -332,14 +336,16 @@ function doGet(e) {
 }
 
 function sendReminderBeforeEvent() {
-  const { activityDate, activityPlace, activityContact } = getSettings();
+  const { activityDate, activityPlace, activityMapUrl, activityContact } = getSettings();
   const today = new Date();
   const reminderDay = new Date(activityDate);
   reminderDay.setDate(activityDate.getDate() - 1);
   if (today.toDateString() !== reminderDay.toDateString()) return;
 
   const data = sheetBooking.getDataRange().getValues();
-  const mapUrl = `https://www.google.com/search?q=https://www.google.com/maps/search/%3Fapi%3D1%26query%3D${encodeURIComponent(activityPlace)}`;
+  const mapLink = activityMapUrl 
+        ? activityMapUrl 
+        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activityPlace)}`;
 
   data.forEach((row, i) => {
     if (i === 0) return;
@@ -353,7 +359,7 @@ function sendReminderBeforeEvent() {
         <p>感謝您預約參加我們的捐血活動！以下為明日活動資訊，請準時前往：</p>
         <ul>
           <li><strong>預約時段：</strong> ${timeslot}</li>
-          <li><strong>活動地點：</strong> <a href="${mapUrl}">${activityPlace}</a><br>
+          <li><strong>活動地點：</strong> <a href="${mapLink}">${activityPlace}</a><br>
         </ul>
         <p>若您無法前來，請儘早告知以便釋出名額。</p>
         <p>謝謝您支持捐血活動，期待與您見面！</p>
