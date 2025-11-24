@@ -4,6 +4,39 @@ const sheetBooking = ss.getSheetByName('BookingData');
 const sheetSetting = ss.getSheetByName('設定');
 const sheetSummary = ss.getSheetByName('BookingSummary');
 
+// ⬇️ NEW: 提取 Drive 檔案 ID 的輔助函數 (從 URL 或 ID 中提取)
+function getDriveFileId(url) {
+  if (!url) return null;
+  var m =
+    url.match(/[?&]id=([a-zA-Z0-9_-]{10,})/) ||
+    url.match(/\/d\/([a-zA-Z0-9_-]{10,})(?:[\/?]|$)/) ||
+    url.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]{10,})/);
+  // 如果是完整的 ID，則直接回傳
+  if (!m && url.length > 20 && url.match(/^[a-zA-Z0-9_-]+$/)) return url;
+  return m ? m[1] : null;
+}
+
+// ⬇️ NEW: 讀取 Drive 檔案並轉換為 Base64 Data URL 的核心函數
+function toBase64DataUrl(fileId) {
+  if (!fileId) return null;
+  try {
+    // 嘗試從 ID 取得檔案
+    const file = DriveApp.getFileById(fileId);
+    const mimeType = file.getMimeType();
+    const bytes = file.getBlob().getBytes();
+    const base64Content = Utilities.base64Encode(bytes);
+    
+    // 檢查 MIME Type 並組成 Data URL 格式
+    if (mimeType.includes('image/')) {
+      return `data:${mimeType};base64,${base64Content}`;
+    }
+    return null; // 非圖片檔案則回傳 null
+  } catch (e) {
+    Logger.log("Error processing Drive file ID " + fileId + ": " + e.toString());
+    return null;
+  }
+}
+
 function getSettings() {
   function toUcViewUrl(url) {
     if (!url) return "";
@@ -237,8 +270,9 @@ function doGet(e) {
   const { type, token } = e.parameter;
   if (!type) return corsJsonResponse({ status: 'error', message: '缺少 type' });
 
-  // 💡 NEW: 讀取 bookingCutoffDate
-  const { maxPerSlot, startDate, activityDate, activityPlace, activityMapUrl, activityContact, promoImage, promoLink, secondPromoImage, secondPromoLink, bookingCutoffDate, promoText } = getSettings();
+  // 💡 NEW: 讀取所有設定
+  const settings = getSettings();
+  const { maxPerSlot, startDate, activityDate, activityPlace, activityMapUrl, activityContact, promoImageRaw, promoLink, secondPromoImage, secondPromoLink, bookingCutoffDate, promoText } = settings;
   const data = sheetBooking.getDataRange().getValues();
   const now = new Date();
 
@@ -309,6 +343,13 @@ function doGet(e) {
       }
     }
 
+    // ⬇️ NEW: Base64 編碼邏輯
+    const promoImageFileId = getDriveFileId(promoImageRaw);
+    const promoImageBase64 = toBase64DataUrl(promoImageFileId);
+    
+    // 如果 Base64 編碼成功，我們回傳 Base64 字串；如果失敗，我們回傳 Drive 直連 URL (用於後續備援)
+    const finalPromoImage = promoImageBase64 || toUcViewUrl(promoImageRaw);
+
     // 💡 修正：預約截止檢查點改為 bookingCutoffDate
     const bookingClosed = now >= new Date(bookingCutoffDate.getTime());
     const notYetOpen = now < startDate;
@@ -325,7 +366,7 @@ function doGet(e) {
         placeMapUrl: activityMapUrl, // <== 【新增】回傳地圖連結給前端
         contact: activityContact,
         startDate: Utilities.formatDate(startDate, "Asia/Taipei", "yyyy/MM/dd"),
-        promoImage: promoImage,
+        promoImage: finalPromoImage,
         promoLink: promoLink,
         secondPromoImage: secondPromoImage,
         secondPromoLink: secondPromoLink,
