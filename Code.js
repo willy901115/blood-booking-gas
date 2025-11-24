@@ -4,40 +4,11 @@ const sheetBooking = ss.getSheetByName('BookingData');
 const sheetSetting = ss.getSheetByName('設定');
 const sheetSummary = ss.getSheetByName('BookingSummary');
 
-// ⬇️ NEW: 提取 Drive 檔案 ID 的輔助函數 (從 URL 或 ID 中提取)
-function getDriveFileId(url) {
-  if (!url) return null;
-  var m =
-    url.match(/[?&]id=([a-zA-Z0-9_-]{10,})/) ||
-    url.match(/\/d\/([a-zA-Z0-9_-]{10,})(?:[\/?]|$)/) ||
-    url.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]{10,})/);
-  // 如果是完整的 ID，則直接回傳
-  if (!m && url.length > 20 && url.match(/^[a-zA-Z0-9_-]+$/)) return url;
-  return m ? m[1] : null;
-}
-
-// ⬇️ NEW: 讀取 Drive 檔案並轉換為 Base64 Data URL 的核心函數
-function toBase64DataUrl(fileId) {
-  if (!fileId) return null;
-  try {
-    // 嘗試從 ID 取得檔案
-    const file = DriveApp.getFileById(fileId);
-    const mimeType = file.getMimeType();
-    const bytes = file.getBlob().getBytes();
-    const base64Content = Utilities.base64Encode(bytes);
-    
-    // 檢查 MIME Type 並組成 Data URL 格式
-    if (mimeType.includes('image/')) {
-      return `data:${mimeType};base64,${base64Content}`;
-    }
-    return null; // 非圖片檔案則回傳 null
-  } catch (e) {
-    Logger.log("Error processing Drive file ID " + fileId + ": " + e.toString());
-    return null;
-  }
-}
+// ⬇️ REMOVED: getDriveFileId function (已移除 Base64 邏輯)
+// ⬇️ REMOVED: toBase64DataUrl function (已移除 Base64 邏輯)
 
 function getSettings() {
+  // 保留 toUcViewUrl 函式，用於處理舊的 Drive 連結或次要圖片，但不會用於 Base64 編碼。
   function toUcViewUrl(url) {
     if (!url) return "";
     var m =
@@ -60,8 +31,8 @@ function getSettings() {
     activityMapUrl: sheetSetting.getRange('C11').getValue(), // <== 【新增】地圖連結/嵌入碼 URL
     promoText: sheetSetting.getRange('C12').getValue(),
     activityContact: sheetSetting.getRange('C14').getValue(),
-    // ⬇️ UPDATE: 儲存原始連結 (不進行 toUcViewUrl 轉換，讓 doGet 處理 Base64 編碼)
-    promoImageRaw: String(sheetSetting.getRange('C15').getValue() || ""),
+    // ⬇️ REVERT: 恢復為直接使用 toUcViewUrl 處理，如果輸入的是 /promo.png，它會原封不動回傳。
+    promoImage: toUcViewUrl(String(sheetSetting.getRange('C15').getValue() || "")),
     promoLink: sheetSetting.getRange('C16').getValue(),
     secondPromoImage: toUcViewUrl(String(sheetSetting.getRange('C17').getValue() || "")),
     secondPromoLink: sheetSetting.getRange('C18').getValue(),
@@ -272,13 +243,12 @@ function doGet(e) {
   if (!type) return corsJsonResponse({ status: 'error', message: '缺少 type' });
 
   // 💡 NEW: 讀取所有設定
-  const settings = getSettings();
-  const { maxPerSlot, startDate, activityDate, activityPlace, activityMapUrl, activityContact, promoImageRaw, promoLink, secondPromoImage, secondPromoLink, bookingCutoffDate, promoText } = settings;
+  const { maxPerSlot, startDate, activityDate, activityPlace, activityMapUrl, activityContact, promoImage, promoLink, secondPromoImage, secondPromoLink, bookingCutoffDate, promoText } = getSettings();
   const data = sheetBooking.getDataRange().getValues();
   const now = new Date();
 
   if (type === 'confirm' || type === 'cancel') {
-    // ... (省略 confirm/cancel 邏輯，無日期修改)
+    // ... (省略 confirm/cancel 邏輯)
     if (!token) return corsJsonResponse({ status: 'error', message: '缺少 token' });
     const rowIndex = data.findIndex(row => row[0] === token);
     if (rowIndex === -1) return corsJsonResponse({ status: 'error', message: '查無預約資料' });
@@ -344,13 +314,6 @@ function doGet(e) {
       }
     }
 
-    // ⬇️ NEW: Base64 編碼邏輯
-    const promoImageFileId = getDriveFileId(promoImageRaw);
-    const promoImageBase64 = toBase64DataUrl(promoImageFileId);
-    
-    // 如果 Base64 編碼成功，我們回傳 Base64 字串；如果失敗，我們回傳 Drive 直連 URL (用於後續備援)
-    const finalPromoImage = promoImageBase64 || toUcViewUrl(promoImageRaw);
-
     // 💡 修正：預約截止檢查點改為 bookingCutoffDate
     const bookingClosed = now >= new Date(bookingCutoffDate.getTime());
     const notYetOpen = now < startDate;
@@ -367,9 +330,10 @@ function doGet(e) {
         placeMapUrl: activityMapUrl, // <== 【新增】回傳地圖連結給前端
         contact: activityContact,
         startDate: Utilities.formatDate(startDate, "Asia/Taipei", "yyyy/MM/dd"),
-        promoImage: finalPromoImage,
+        // ⬇️ REVERT: 直接使用 URL/路徑
+        promoImage: promoImage,
         promoLink: promoLink,
-        secondPromoImage: secondPromoImage,
+        secondPromoImage: secondPromoImage, 
         secondPromoLink: secondPromoLink,
         promoText: promoText,
       }
