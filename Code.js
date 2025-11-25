@@ -4,11 +4,20 @@ const sheetBooking = ss.getSheetByName('BookingData');
 const sheetSetting = ss.getSheetByName('設定');
 const sheetSummary = ss.getSheetByName('BookingSummary');
 
-// ⬇️ REMOVED: getDriveFileId function (已移除 Base64 邏輯)
-// ⬇️ REMOVED: toBase64DataUrl function (已移除 Base64 邏輯)
+// ⬇️ REUSED: 提取 Drive 檔案 ID 的輔助函數
+function getDriveFileId(url) {
+  if (!url) return null;
+  var m =
+    url.match(/[?&]id=([a-zA-Z0-9_-]{10,})/) ||
+    url.match(/\/d\/([a-zA-Z0-9_-]{10,})(?:[\/?]|$)/) ||
+    url.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]{10,})/);
+  if (!m && url.length > 20 && url.match(/^[a-zA-Z0-9_-]+$/)) return url;
+  return m ? m[1] : null;
+}
+
+// ⬇️ REMOVED: toBase64DataUrl (不再需要 Base64)
 
 function getSettings() {
-  // 保留 toUcViewUrl 函式，用於處理舊的 Drive 連結或次要圖片，但不會用於 Base64 編碼。
   function toUcViewUrl(url) {
     if (!url) return "";
     var m =
@@ -31,10 +40,10 @@ function getSettings() {
     activityMapUrl: sheetSetting.getRange('C11').getValue(), // <== 【新增】地圖連結/嵌入碼 URL
     promoText: sheetSetting.getRange('C12').getValue(),
     activityContact: sheetSetting.getRange('C14').getValue(),
-    // ⬇️ REVERT: 恢復為直接使用 toUcViewUrl 處理，如果輸入的是 /promo.png，它會原封不動回傳。
-    promoImage: toUcViewUrl(String(sheetSetting.getRange('C15').getValue() || "")),
+    // ⬇️ UPDATE: 存儲原始連結，讓 doGet 轉換成 Image Proxy URL
+    promoImageRaw: String(sheetSetting.getRange('C15').getValue() || ""),
     promoLink: sheetSetting.getRange('C16').getValue(),
-    secondPromoImage: toUcViewUrl(String(sheetSetting.getRange('C17').getValue() || "")),
+    secondPromoImageRaw: String(sheetSetting.getRange('C17').getValue() || ""),
     secondPromoLink: sheetSetting.getRange('C18').getValue(),
   };
 }
@@ -239,11 +248,29 @@ function doPost(e) {
 }
 
 function doGet(e) {
-  const { type, token } = e.parameter;
+  const { type, token, id } = e.parameter;
+  
+  // ⬇️ NEW: 圖片代理邏輯 (必須在 JSON 邏輯之前執行)
+  if (type === 'image' && id) {
+    try {
+      const file = DriveApp.getFileById(id);
+      const blob = file.getBlob();
+      
+      // 直接返回 Blob 物件，讓 Apps Script 服務處理 Content-Type 和 CORS
+      return blob; 
+    } catch (err) {
+      Logger.log(`Image Proxy Error for ID ${id}: ${err.message}`);
+      // 返回一個透明的 1x1 像素圖片，避免圖片元件崩潰
+      const transparentBlob = Utilities.newBlob(Utilities.base64Decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYGD4DwAADgAEAQAHCAAAAABJRU5ErkJggg=="), "image/png");
+      return transparentBlob;
+    }
+  }
+  
   if (!type) return corsJsonResponse({ status: 'error', message: '缺少 type' });
 
   // 💡 NEW: 讀取所有設定
-  const { maxPerSlot, startDate, activityDate, activityPlace, activityMapUrl, activityContact, promoImage, promoLink, secondPromoImage, secondPromoLink, bookingCutoffDate, promoText } = getSettings();
+  const settings = getSettings();
+  const { maxPerSlot, startDate, activityDate, activityPlace, activityMapUrl, activityContact, promoImageRaw, promoLink, secondPromoImageRaw, secondPromoLink, bookingCutoffDate, promoText } = settings;
   const data = sheetBooking.getDataRange().getValues();
   const now = new Date();
 
@@ -314,6 +341,13 @@ function doGet(e) {
       }
     }
 
+    // ⬇️ UPDATE: 轉換圖片連結為新的 Image Proxy URL
+    const promoImageId = getDriveFileId(promoImageRaw);
+    const finalPromoImage = promoImageId ? `?type=image&id=${promoImageId}` : promoImageRaw;
+    
+    const secondPromoImageId = getDriveFileId(secondPromoImageRaw);
+    const finalSecondPromoImage = secondPromoImageId ? `?type=image&id=${secondPromoImageId}` : secondPromoImageRaw;
+    
     // 💡 修正：預約截止檢查點改為 bookingCutoffDate
     const bookingClosed = now >= new Date(bookingCutoffDate.getTime());
     const notYetOpen = now < startDate;
@@ -330,10 +364,9 @@ function doGet(e) {
         placeMapUrl: activityMapUrl, // <== 【新增】回傳地圖連結給前端
         contact: activityContact,
         startDate: Utilities.formatDate(startDate, "Asia/Taipei", "yyyy/MM/dd"),
-        // ⬇️ REVERT: 直接使用 URL/路徑
-        promoImage: promoImage,
+        promoImage: finalPromoImage,
         promoLink: promoLink,
-        secondPromoImage: secondPromoImage, 
+        secondPromoImage: finalSecondPromoImage,
         secondPromoLink: secondPromoLink,
         promoText: promoText,
       }
