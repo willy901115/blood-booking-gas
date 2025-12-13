@@ -21,20 +21,21 @@ function formatDateTime(date) {
   return Utilities.formatDate(date, "Asia/Taipei", "yyyy/MM/dd HH:mm");
 }
 
-// ⬇️ NEW: 輔助函數：將地圖連結轉換為可點擊的格式 (處理嵌入碼問題)
+// ⬇️ UPDATE: 輔助函數：將地圖連結轉換為可點擊的「地點搜尋」格式 (解決嵌入碼和導航問題)
 function toClickableMapUrl(rawUrl, placeName) {
-  // 1. 如果連結包含 '/embed' 或 '/api/'，或連結為空，我們假設它不是可點擊的連結。
-  if (!rawUrl || rawUrl.includes('/embed') || rawUrl.includes('/api/')) {
+  // 檢查連結是否是 Google Maps 嵌入碼，或連結為空/不完整
+  // 如果是嵌入碼 (包含 /embed) 或不是標準的 http/https 連結，則使用地點名稱搜尋。
+  if (!rawUrl || rawUrl.includes('/embed') || !rawUrl.match(/^https?:\/\//i)) {
     if (placeName) {
-      // 2. 使用地點名稱建立 Google Maps 搜尋連結作為最可靠的備用方案
-      // 使用 "maps/search/?api=1" 確保在手機上能正確導向 Google Maps App
-      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(placeName)}`;
+      // 建立 Google Maps 搜尋連結 (查詢模式), 這會顯示地點資訊頁面而不是直接導航。
+      // 使用 Utilities.urlEncode 確保地點名稱正確編碼。
+      const encodedPlace = Utilities.urlEncode(placeName);
+      return `https://www.google.com/maps/search/?api=1&query=${encodedPlace}`;
     }
-    // 3. 如果地點名稱也沒有，則返回空字串
     return '';
   }
   
-  // 4. 如果連結看起來是個正常的 URL，則直接回傳
+  // 如果連結看起來是個正常的 URL (且不是 embed)，則直接回傳
   return rawUrl;
 }
 
@@ -232,7 +233,7 @@ function doPost(e) {
     const confirmUrl = `https://blood-booking.vercel.app/confirm?token=${id}`;
     const cancelUrl = `https://blood-booking.vercel.app/cancel?token=${id}`;
     
-    // ⬇️ UPDATE: 使用 toClickableMapUrl 處理地圖連結，解決嵌入碼無法點擊的問題
+    // ⬇️ UPDATE: 使用 toClickableMapUrl 處理地圖連結，確保是可點擊的地點連結
     const mapLink = toClickableMapUrl(activityMapUrl, activityPlace);
 
     MailApp.sendEmail({
