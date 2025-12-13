@@ -15,12 +15,28 @@ function getDriveFileId(url) {
   return m ? m[1] : null;
 }
 
-// ⬇️ NEW: 格式化日期時間為 yyyy/MM/dd HH:mm
+// ⬇️ REUSED: 格式化日期時間為 yyyy/MM/dd HH:mm
 function formatDateTime(date) {
   if (!date) return '';
   return Utilities.formatDate(date, "Asia/Taipei", "yyyy/MM/dd HH:mm");
 }
 
+// ⬇️ NEW: 輔助函數：將地圖連結轉換為可點擊的格式 (處理嵌入碼問題)
+function toClickableMapUrl(rawUrl, placeName) {
+  // 1. 如果連結包含 '/embed' 或 '/api/'，或連結為空，我們假設它不是可點擊的連結。
+  if (!rawUrl || rawUrl.includes('/embed') || rawUrl.includes('/api/')) {
+    if (placeName) {
+      // 2. 使用地點名稱建立 Google Maps 搜尋連結作為最可靠的備用方案
+      // 使用 "maps/search/?api=1" 確保在手機上能正確導向 Google Maps App
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(placeName)}`;
+    }
+    // 3. 如果地點名稱也沒有，則返回空字串
+    return '';
+  }
+  
+  // 4. 如果連結看起來是個正常的 URL，則直接回傳
+  return rawUrl;
+}
 
 function getSettings() {
   function toUcViewUrl(url) {
@@ -216,10 +232,8 @@ function doPost(e) {
     const confirmUrl = `https://blood-booking.vercel.app/confirm?token=${id}`;
     const cancelUrl = `https://blood-booking.vercel.app/cancel?token=${id}`;
     
-    // 如果 activityMapUrl 不存在，則退回使用 activityPlace 透過 Google 搜尋的連結
-    const mapLink = activityMapUrl 
-        ? activityMapUrl 
-        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activityPlace)}`;
+    // ⬇️ UPDATE: 使用 toClickableMapUrl 處理地圖連結，解決嵌入碼無法點擊的問題
+    const mapLink = toClickableMapUrl(activityMapUrl, activityPlace);
 
     MailApp.sendEmail({
       to: email,
@@ -370,7 +384,7 @@ function doGet(e) {
         date: Utilities.formatDate(activityDate, "Asia/Taipei", "yyyy/MM/dd"),
         bookingCutoffDate: Utilities.formatDate(bookingCutoffDate, "Asia/Taipei", "yyyy/MM/dd"),
         place: activityPlace,
-        placeMapUrl: activityMapUrl, // <== 【新增】回傳地圖連結給前端
+        placeMapUrl: activityMapUrl, // <== 回傳原始連結給前端，前端會自行處理
         contact: activityContact,
         startDate: Utilities.formatDate(startDate, "Asia/Taipei", "yyyy/MM/dd"),
         promoImage: finalPromoImage,
@@ -393,9 +407,9 @@ function sendReminderBeforeEvent() {
   if (today.toDateString() !== reminderDay.toDateString()) return;
 
   const data = sheetBooking.getDataRange().getValues();
-  const mapLink = activityMapUrl 
-        ? activityMapUrl 
-        : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activityPlace)}`;
+  
+  // ⬇️ UPDATE: 使用 toClickableMapUrl 處理地圖連結
+  const mapLink = toClickableMapUrl(activityMapUrl, activityPlace);
 
   data.forEach((row, i) => {
     if (i === 0) return;
