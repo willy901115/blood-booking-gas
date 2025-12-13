@@ -21,22 +21,20 @@ function formatDateTime(date) {
   return Utilities.formatDate(date, "Asia/Taipei", "yyyy/MM/dd HH:mm");
 }
 
-// ⬇️ UPDATE: 輔助函數：將地圖連結轉換為可點擊的「地點搜尋」格式 (解決嵌入碼和導航問題)
+// ⬇️ CRITICAL FIX & UPDATE: 輔助函數：將地圖連結轉換為可點擊的「地點搜尋」格式 
 function toClickableMapUrl(rawUrl, placeName) {
-  // 檢查連結是否是 Google Maps 嵌入碼，或連結為空/不完整
-  // 如果是嵌入碼 (包含 /embed)，或不是標準的 http/https 連結，則使用地點名稱搜尋。
-  if (!rawUrl || rawUrl.includes('/embed') || !rawUrl.match(/^https?:\/\//i)) {
+  // 檢查連結是否是 Google Maps 嵌入碼，或連結為空/不完整，或可能是導航連結
+  // 如果是這些情況，我們改為生成一個標準的地點搜尋連結。
+  if (!rawUrl || rawUrl.includes('/embed') || !rawUrl.match(/^https?:\/\//i) || rawUrl.includes('/dir')) {
     if (placeName) {
-      // 建立 Google Maps 搜尋連結 (查詢模式), 這會顯示地點資訊頁面而不是直接導航。
-      // 使用 Utilities.urlEncode 確保地點名稱正確編碼。
+      // 建立 Google Maps 搜尋連結 (查詢模式, ?query=), 這會顯示地點資訊頁面而不是直接導航。
       const encodedPlace = Utilities.urlEncode(placeName);
-      // 修正：使用正確的 Google Maps 搜尋 URL 格式
       return `https://www.google.com/maps/search/?api=1&query=${encodedPlace}`;
     }
     return '';
   }
   
-  // 如果連結看起來是個正常的 URL (且不是 embed)，則直接回傳
+  // 如果連結看起來是個正常的 URL (且不是 embed 或 dir)，則直接回傳
   return rawUrl;
 }
 
@@ -392,7 +390,7 @@ function doGet(e) {
         promoImage: finalPromoImage,
         promoLink: promoLink,
         secondPromoImage: finalSecondPromoImage,
-        secondPromoLink: secondPromoLink,
+        secondPromoLink: finalSecondPromoLink,
         promoText: promoText,
       }
     });
