@@ -24,12 +24,13 @@ function formatDateTime(date) {
 // ⬇️ UPDATE: 輔助函數：將地圖連結轉換為可點擊的「地點搜尋」格式 (解決嵌入碼和導航問題)
 function toClickableMapUrl(rawUrl, placeName) {
   // 檢查連結是否是 Google Maps 嵌入碼，或連結為空/不完整
-  // 如果是嵌入碼 (包含 /embed) 或不是標準的 http/https 連結，則使用地點名稱搜尋。
+  // 如果是嵌入碼 (包含 /embed)，或不是標準的 http/https 連結，則使用地點名稱搜尋。
   if (!rawUrl || rawUrl.includes('/embed') || !rawUrl.match(/^https?:\/\//i)) {
     if (placeName) {
       // 建立 Google Maps 搜尋連結 (查詢模式), 這會顯示地點資訊頁面而不是直接導航。
       // 使用 Utilities.urlEncode 確保地點名稱正確編碼。
       const encodedPlace = Utilities.urlEncode(placeName);
+      // 修正：使用正確的 Google Maps 搜尋 URL 格式
       return `https://www.google.com/maps/search/?api=1&query=${encodedPlace}`;
     }
     return '';
