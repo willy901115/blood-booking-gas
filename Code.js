@@ -59,14 +59,14 @@ function getSettings() {
     slotIntervalMinutes: sheetSetting.getRange('C8').getValue() || 30, // 預設 30 分鐘間隔
     maxPerSlot: sheetSetting.getRange('C9').getValue(),
     activityPlace: sheetSetting.getRange('C10').getValue(),
-    activityMapUrl: sheetSetting.getRange('C11').getValue(), // <== 地圖連結/嵌入碼 URL
-    promoText: sheetSetting.getRange('C12').getValue(),
-    activityContact: sheetSetting.getRange('C14').getValue(),
-    // ⬇️ UPDATE: 存儲原始連結，讓 doGet 轉換成 Image Proxy URL
-    promoImageRaw: String(sheetSetting.getRange('C15').getValue() || ""),
-    promoLink: sheetSetting.getRange('C16').getValue(),
-    secondPromoImageRaw: String(sheetSetting.getRange('C17').getValue() || ""),
-    secondPromoLink: sheetSetting.getRange('C18').getValue(),
+    activityMapLink: String(sheetSetting.getRange('C11').getValue() || ""), // NEW: 地圖連結 URL (取代原 activityMapUrl)
+    activityMapIframe: String(sheetSetting.getRange('C12').getValue() || ""), // NEW: 地圖嵌入碼 HTML
+    promoText: sheetSetting.getRange('C13').getValue(), // SHIFTED: C12 -> C13
+    activityContact: sheetSetting.getRange('C15').getValue(),
+    promoImageRaw: String(sheetSetting.getRange('C16').getValue() || ""),
+    promoLink: sheetSetting.getRange('C17').getValue(),
+    secondPromoImageRaw: String(sheetSetting.getRange('C18').getValue() || ""),
+    secondPromoLink: sheetSetting.getRange('C19').getValue(),
   };
 }
 
@@ -210,7 +210,7 @@ function doPost(e) {
 
     lock.waitLock(LOCK_WAIT_TIMEOUT); 
     
-    const { maxPerSlot, activityDate, activityPlace, activityContact, activityMapUrl } = getSettings();
+    const { maxPerSlot, activityDate, activityPlace, activityContact, activityMapLink } = getSettings();
     const allRows = sheetBooking.getDataRange().getValues();
     const invalidStates = ["已取消", "回覆逾期", "已拒絕"];
 
@@ -244,8 +244,7 @@ function doPost(e) {
     const confirmUrl = `https://blood-booking.vercel.app/confirm?token=${id}`;
     const cancelUrl = `https://blood-booking.vercel.app/cancel?token=${id}`;
     
-    // ⬇️ UPDATE: 使用修正後的 toClickableMapUrl 處理地圖連結
-    const mapLink = toClickableMapUrl(activityMapUrl, activityPlace);
+    const mapLink = toClickableMapUrl(activityMapLink, activityPlace);
 
     MailApp.sendEmail({
       to: email,
@@ -302,7 +301,7 @@ function doGet(e) {
 
   // 💡 NEW: 讀取所有設定
   const settings = getSettings(); // ❗ 此處的 getSettings 修正後將解決首頁內容消失的問題
-  const { maxPerSlot, startDate, activityDate, activityPlace, activityMapUrl, activityContact, promoImageRaw, promoLink, secondPromoImageRaw, secondPromoLink, bookingCutoffDate, promoText } = settings;
+  const { maxPerSlot, startDate, activityDate, activityPlace, activityMapLink, activityMapIframe, activityContact, promoImageRaw, promoLink, secondPromoImageRaw, secondPromoLink, bookingCutoffDate, promoText } = settings;
   const data = sheetBooking.getDataRange().getValues();
   const now = new Date();
 
@@ -397,7 +396,8 @@ function doGet(e) {
         date: Utilities.formatDate(activityDate, "Asia/Taipei", "yyyy/MM/dd"),
         bookingCutoffDate: Utilities.formatDate(bookingCutoffDate, "Asia/Taipei", "yyyy/MM/dd"),
         place: activityPlace,
-        placeMapUrl: activityMapUrl, // <== 回傳原始連結給前端，前端會自行處理
+        placeMapLink: activityMapLink, // NEW: 地點的Google Map連結 URL
+        placeMapIframe: activityMapIframe, // NEW: 地點的Google Map嵌入碼 HTML
         contact: activityContact,
         startDate: Utilities.formatDate(startDate, "Asia/Taipei", "yyyy/MM/dd"),
         promoImage: finalPromoImage,
@@ -413,7 +413,7 @@ function doGet(e) {
 }
 
 function sendReminderBeforeEvent() {
-  const { activityDate, activityPlace, activityMapUrl, activityContact } = getSettings();
+  const { activityDate, activityPlace, activityMapLink, activityContact } = getSettings();
   const today = new Date();
   const reminderDay = new Date(activityDate);
   reminderDay.setDate(activityDate.getDate() - 1);
@@ -421,8 +421,7 @@ function sendReminderBeforeEvent() {
 
   const data = sheetBooking.getDataRange().getValues();
   
-  // ⬇️ UPDATE: 使用修正後的 toClickableMapUrl 處理地圖連結
-  const mapLink = toClickableMapUrl(activityMapUrl, activityPlace);
+  const mapLink = toClickableMapUrl(activityMapLink, activityPlace);
 
   data.forEach((row, i) => {
     if (i === 0) return;
