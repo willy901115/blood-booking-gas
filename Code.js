@@ -27,9 +27,9 @@ function toClickableMapUrl(rawUrl, placeName) {
   if (!rawUrl || rawUrl.includes('/embed') || !rawUrl.match(/^https?:\/\//i) || rawUrl.includes('/dir') || rawUrl.includes('googleusercontent.com')) {
     if (placeName) {
       // 建立 Google Maps 搜尋連結 (查詢模式, ?query=)
-      const encodedPlace = Utilities.urlEncode(placeName);
+      const encodedPlace = encodeURIComponent(placeName); // 修正 1: 移除 Utilities.
       // ✅ 修正：使用標準且正確的 Google Maps 搜尋 URL
-      return `https://www.google.com/maps/search/?api=1&query=${encodedPlace}`; 
+      return `https://www.google.com/maps/search/?api=1&query=${encodedPlace}`; // 修正 2: 正確的 Google Maps URL 格式
     }
     return '';
   }
