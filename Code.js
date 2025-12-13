@@ -21,15 +21,15 @@ function formatDateTime(date) {
   return Utilities.formatDate(date, "Asia/Taipei", "yyyy/MM/dd HH:mm");
 }
 
-// ⬇️ CRITICAL FIX & UPDATE: 輔助函數：將地圖連結轉換為可點擊的「地點搜尋」格式 
+// ⬇️ CRITICAL FIX: 修正地圖連結生成邏輯 (解決 email 錯誤)
 function toClickableMapUrl(rawUrl, placeName) {
-  // 檢查連結是否是 Google Maps 嵌入碼，或連結為空/不完整，或可能是導航連結
-  // 如果是這些情況，我們改為生成一個標準的地點搜尋連結。
-  if (!rawUrl || rawUrl.includes('/embed') || !rawUrl.match(/^https?:\/\//i) || rawUrl.includes('/dir')) {
+  // 檢查連結是否是 Google Maps 嵌入碼、無效的連結或我們上一步生成的錯誤連結。
+  if (!rawUrl || rawUrl.includes('/embed') || !rawUrl.match(/^https?:\/\//i) || rawUrl.includes('/dir') || rawUrl.includes('googleusercontent.com')) {
     if (placeName) {
-      // 建立 Google Maps 搜尋連結 (查詢模式, ?query=), 這會顯示地點資訊頁面而不是直接導航。
+      // 建立 Google Maps 搜尋連結 (查詢模式, ?query=)
       const encodedPlace = Utilities.urlEncode(placeName);
-      return `https://www.google.com/maps/search/?api=1&query=${encodedPlace}`;
+      // ✅ 修正：使用標準且正確的 Google Maps 搜尋 URL
+      return `https://www.google.com/maps/search/?api=1&query=${encodedPlace}`; 
     }
     return '';
   }
@@ -51,14 +51,15 @@ function getSettings() {
   
   return {
     activityDate: new Date(Utilities.formatDate(sheetSetting.getRange('C2').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
-    startDate: new Date(Utilities.formatDate(sheetSetting.getRange('C3').getValue(), "Asia/TaiTaipei", "yyyy/MM/dd")),
+    // ⬇️ CRITICAL FIX: 修正時區拼寫錯誤 (解決首頁內容消失)
+    startDate: new Date(Utilities.formatDate(sheetSetting.getRange('C3').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
     bookingCutoffDate: new Date(Utilities.formatDate(sheetSetting.getRange('C4').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
     slotStartTime: normalizeTime(sheetSetting.getRange('C6').getValue()),
     slotEndTime: normalizeTime(sheetSetting.getRange('C7').getValue()),
     slotIntervalMinutes: sheetSetting.getRange('C8').getValue() || 30, // 預設 30 分鐘間隔
     maxPerSlot: sheetSetting.getRange('C9').getValue(),
     activityPlace: sheetSetting.getRange('C10').getValue(),
-    activityMapUrl: sheetSetting.getRange('C11').getValue(), // <== 【新增】地圖連結/嵌入碼 URL
+    activityMapUrl: sheetSetting.getRange('C11').getValue(), // <== 地圖連結/嵌入碼 URL
     promoText: sheetSetting.getRange('C12').getValue(),
     activityContact: sheetSetting.getRange('C14').getValue(),
     // ⬇️ UPDATE: 存儲原始連結，讓 doGet 轉換成 Image Proxy URL
@@ -70,32 +71,39 @@ function getSettings() {
 }
 
 function corsJsonResponse(payload) {
+  // ... (省略)
   return ContentService.createTextOutput(JSON.stringify(payload))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
 function doOptions(e) {
+  // ... (省略)
   return ContentService.createTextOutput("").setMimeType(ContentService.MimeType.TEXT);
 }
 
 function initializeSheetFormat() {
+  // ... (省略)
   sheetBooking.getRange(2, 3, sheetBooking.getMaxRows() - 1).setNumberFormat('@STRING@');
   sheetBooking.getRange(2, 5, sheetBooking.getMaxRows() - 1).setNumberFormat('@STRING@');
 }
 
 function isValidEmail(email) {
+  // ... (省略)
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function isValidMobile(num) {
+  // ... (省略)
   return /^09\d{8}$/.test(num);
 }
 
 function isValidLandline(num) {
+  // ... (省略)
   return /^(0(?:2|3|4|5|6|7|8|82|836|89))-?\d{6,8}$/.test(num);
 }
 
 function toMinutes(timestr) {
+  // ... (省略)
   if (!timestr || typeof timestr !== 'string') return NaN;
   const match = timestr.match(/^(\d{1,2}):(\d{2})$/);
   if (!match) return NaN;
@@ -104,6 +112,7 @@ function toMinutes(timestr) {
 }
 
 function normalizeTime(raw) {
+  // ... (省略)
   if (raw instanceof Date) {
     const h = raw.getHours();
     const m = raw.getMinutes();
@@ -120,6 +129,7 @@ function normalizeTime(raw) {
 }
 
 function generateTimeSlots() {
+  // ... (省略)
   const { slotStartTime, slotEndTime, slotIntervalMinutes } = getSettings();
   
   const startTimeMin = toMinutes(slotStartTime);
@@ -143,6 +153,7 @@ function generateTimeSlots() {
 
 
 function updateBookingSummary() {
+  // ... (省略)
   const TIME_SLOTS = generateTimeSlots(); 
   const { maxPerSlot } = getSettings();
   const data = sheetBooking.getDataRange().getValues();
@@ -187,6 +198,7 @@ function doPost(e) {
     const data = JSON.parse(e.postData.contents);
     const { name, email, phone, timeslot } = data;
     
+    // ... (省略前置檢查)
     if (!name || !email || !phone || !timeslot) throw new Error("缺少必要欄位");
     if (!isValidEmail(email)) return corsJsonResponse({ status: 'error', message: 'Email 格式不正確，請重新輸入' });
     if (!isValidMobile(phone) && !isValidLandline(phone)) return corsJsonResponse({ status: 'error', message: '電話格式不正確' });
@@ -232,7 +244,7 @@ function doPost(e) {
     const confirmUrl = `https://blood-booking.vercel.app/confirm?token=${id}`;
     const cancelUrl = `https://blood-booking.vercel.app/cancel?token=${id}`;
     
-    // ⬇️ UPDATE: 使用 toClickableMapUrl 處理地圖連結，確保是可點擊的地點連結
+    // ⬇️ UPDATE: 使用修正後的 toClickableMapUrl 處理地圖連結
     const mapLink = toClickableMapUrl(activityMapUrl, activityPlace);
 
     MailApp.sendEmail({
@@ -289,7 +301,7 @@ function doGet(e) {
   if (!type) return corsJsonResponse({ status: 'error', message: '缺少 type' });
 
   // 💡 NEW: 讀取所有設定
-  const settings = getSettings();
+  const settings = getSettings(); // ❗ 此處的 getSettings 修正後將解決首頁內容消失的問題
   const { maxPerSlot, startDate, activityDate, activityPlace, activityMapUrl, activityContact, promoImageRaw, promoLink, secondPromoImageRaw, secondPromoLink, bookingCutoffDate, promoText } = settings;
   const data = sheetBooking.getDataRange().getValues();
   const now = new Date();
@@ -320,6 +332,7 @@ function doGet(e) {
   }
   
   if (type === 'summary') {
+    // ... (省略 summary 邏輯)
     if (!token) return corsJsonResponse({ status: 'error', message: '缺少 token' });
 
     const rowIndex = data.findIndex(row => row[0] === token);
@@ -390,7 +403,7 @@ function doGet(e) {
         promoImage: finalPromoImage,
         promoLink: promoLink,
         secondPromoImage: finalSecondPromoImage,
-        secondPromoLink: finalSecondPromoLink,
+        secondPromoLink: secondPromoLink,
         promoText: promoText,
       }
     });
@@ -408,7 +421,7 @@ function sendReminderBeforeEvent() {
 
   const data = sheetBooking.getDataRange().getValues();
   
-  // ⬇️ UPDATE: 使用 toClickableMapUrl 處理地圖連結
+  // ⬇️ UPDATE: 使用修正後的 toClickableMapUrl 處理地圖連結
   const mapLink = toClickableMapUrl(activityMapUrl, activityPlace);
 
   data.forEach((row, i) => {
