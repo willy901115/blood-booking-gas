@@ -15,7 +15,12 @@ function getDriveFileId(url) {
   return m ? m[1] : null;
 }
 
-// ⬇️ REMOVED: toBase64DataUrl (不再需要 Base64)
+// ⬇️ NEW: 格式化日期時間為 yyyy/MM/dd HH:mm
+function formatDateTime(date) {
+  if (!date) return '';
+  return Utilities.formatDate(date, "Asia/Taipei", "yyyy/MM/dd HH:mm");
+}
+
 
 function getSettings() {
   function toUcViewUrl(url) {
@@ -30,7 +35,7 @@ function getSettings() {
   
   return {
     activityDate: new Date(Utilities.formatDate(sheetSetting.getRange('C2').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
-    startDate: new Date(Utilities.formatDate(sheetSetting.getRange('C3').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
+    startDate: new Date(Utilities.formatDate(sheetSetting.getRange('C3').getValue(), "Asia/TaiTaipei", "yyyy/MM/dd")),
     bookingCutoffDate: new Date(Utilities.formatDate(sheetSetting.getRange('C4').getValue(), "Asia/Taipei", "yyyy/MM/dd")),
     slotStartTime: normalizeTime(sheetSetting.getRange('C6').getValue()),
     slotEndTime: normalizeTime(sheetSetting.getRange('C7').getValue()),
@@ -197,7 +202,8 @@ function doPost(e) {
 
     const now = new Date();
     const id = `Q${Math.floor((now.getMonth() + 3) / 3)}-${now.getFullYear()}-${Utilities.getUuid().slice(0, 8)}`;
-    const values = [id, name, email, phone, timeslot, '待確認', now, ''];
+    // ⬇️ UPDATE: 使用 formatDateTime 儲存建立時間
+    const values = [id, name, email, phone, timeslot, '待確認', formatDateTime(now), ''];
 
     sheetBooking.getRange(sheetBooking.getLastRow() + 1, 1, 1, values.length).setValues([values]);
     sheetBooking.getRange(sheetBooking.getLastRow(), 4).setNumberFormat('@STRING@');
@@ -282,14 +288,16 @@ function doGet(e) {
     const status = data[rowIndex][5];
     if (type === 'confirm' && status === '待確認') {
       sheetBooking.getRange(rowIndex + 1, 6).setValue('已確認');
-      sheetBooking.getRange(rowIndex + 1, 7).setValue(new Date());
+      // ⬇️ UPDATE: 使用 formatDateTime 儲存確認時間
+      sheetBooking.getRange(rowIndex + 1, 7).setValue(formatDateTime(new Date()));
       updateBookingSummary();
       return corsJsonResponse({ status: 'success', message: '預約確認成功' });
     } else if (type === 'confirm' && status === '已取消') {
       return corsJsonResponse({ status: 'canceled', message: '預約已取消' });
     } else if (type === 'cancel' && (status === '待確認' || status === '已確認')) {
       sheetBooking.getRange(rowIndex + 1, 6).setValue('已取消');
-      sheetBooking.getRange(rowIndex + 1, 7).setValue(new Date());
+      // ⬇️ UPDATE: 使用 formatDateTime 儲存取消時間
+      sheetBooking.getRange(rowIndex + 1, 7).setValue(formatDateTime(new Date()));
       updateBookingSummary();
       return corsJsonResponse({ status: 'success', message: '預約已取消' });
     } else {
@@ -309,6 +317,7 @@ function doGet(e) {
     const deadlineDate = new Date(bookingCutoffDate); 
     
     // 計算截止日期：取 (created + 7天) 和 (預約截止日) 中較早者
+    // createTime 現在是 yyyy/MM/dd HH:mm 格式的字串，new Date() 應該能解析
     const created = new Date(createTime);
     const deadlineTimestamp = Math.min(created.getTime() + 7 * 24 * 60 * 60 * 1000, deadlineDate.getTime());
     
@@ -425,6 +434,7 @@ function checkExpiredBookings() {
     const [id, name, email, , timeslot, status, createTime] = row;
     if (status !== '待確認') return;
 
+    // createTime 現在是 yyyy/MM/dd HH:mm 格式的字串
     const created = new Date(createTime);
     // 💡 修正：使用 deadlineDate (即 bookingCutoffDate)
     const deadline = new Date(Math.min(created.getTime() + 7 * 24 * 60 * 60 * 1000, deadlineDate.getTime()));
@@ -442,7 +452,8 @@ function checkExpiredBookings() {
       });
     } else if (daysLeft < 0) {
       sheetBooking.getRange(i + 1, 6).setValue('回覆逾期');
-      sheetBooking.getRange(i + 1, 7).setValue(new Date());
+      // ⬇️ UPDATE: 使用 formatDateTime 儲存逾期時間
+      sheetBooking.getRange(i + 1, 7).setValue(formatDateTime(new Date()));
       MailApp.sendEmail({
         to: email,
         subject: '❌ 預約已取消（逾期未確認）',
